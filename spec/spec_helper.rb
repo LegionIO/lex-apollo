@@ -11,6 +11,18 @@ module Legion
   end
 end
 
+# Sequel is a runtime dependency via legion-data; stub for specs
+unless defined?(Sequel)
+  module Sequel
+    class Error < StandardError; end
+
+    def self.pg_array(arr) = arr
+    def self.lit(str) = str
+    Expr = Struct.new(:value) { def +(other) = "#{value} + #{other}" }
+    def self.expr(sym) = Expr.new(sym)
+  end
+end
+
 RSpec.configure do |config|
   config.example_status_persistence_file_path = '.rspec_status'
   config.disable_monkey_patching!

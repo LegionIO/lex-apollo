@@ -17,6 +17,52 @@ module Legion
             { action: :agent_profile, agent_id: agent_id }
           end
 
+          def aggregate(**)
+            return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
+
+            entries = Legion::Data::Model::ApolloEntry
+                      .select(:source_agent, :tags, :confidence)
+                      .exclude(source_agent: nil)
+                      .all
+
+            groups = {}
+            entries.each do |entry|
+              agent = entry.source_agent
+              domain = entry.tags.is_a?(Array) ? (entry.tags.first || 'general') : 'general'
+              key = "#{agent}:#{domain}"
+              groups[key] ||= { agent_id: agent, domain: domain, confidences: [] }
+              groups[key][:confidences] << entry.confidence.to_f
+            end
+
+            agent_set = Set.new
+            domain_set = Set.new
+
+            groups.each_value do |group|
+              avg = group[:confidences].sum / group[:confidences].size
+              count = group[:confidences].size
+              proficiency = [avg * Math.log2(count + 1), 1.0].min
+
+              existing = Legion::Data::Model::ApolloExpertise
+                         .where(agent_id: group[:agent_id], domain: group[:domain]).first
+
+              if existing
+                existing.update(proficiency: proficiency, entry_count: count, last_active_at: Time.now)
+              else
+                Legion::Data::Model::ApolloExpertise.create(
+                  agent_id: group[:agent_id], domain: group[:domain],
+                  proficiency: proficiency, entry_count: count, last_active_at: Time.now
+                )
+              end
+
+              agent_set << group[:agent_id]
+              domain_set << group[:domain]
+            end
+
+            { success: true, agents: agent_set.size, domains: domain_set.size }
+          rescue Sequel::Error => e
+            { success: false, error: e.message }
+          end
+
           include Legion::Extensions::Helpers::Lex if defined?(Legion::Extensions::Helpers::Lex)
         end
       end

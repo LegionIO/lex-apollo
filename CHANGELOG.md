@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.0] - 2026-03-16
+
+### Added
+- `Helpers::Embedding` — embedding generation wrapper with legion-llm + zero-vector fallback
+- `Knowledge.handle_ingest` — server-side ingest: embedding, corroboration check, entry creation, expertise upsert
+- `Knowledge.handle_query` — server-side query: semantic search via pgvector, retrieval boost, access logging
+- `Knowledge.retrieve_relevant` — GAIA tick phase handler for knowledge_retrieval (phase 4)
+- `Maintenance.check_corroboration` — periodic scan promoting candidates to confirmed via similarity threshold
+- `Expertise.aggregate` — periodic proficiency recalculation using log2-weighted average confidence
+
 ## [0.1.0] - 2026-03-15
 
 ### Added
