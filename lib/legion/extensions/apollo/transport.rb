@@ -3,7 +3,9 @@
 module Legion
   module Extensions
     module Apollo
-      VERSION = '0.3.1'
+      module Transport
+        extend Legion::Extensions::Transport
+      end
     end
   end
 end

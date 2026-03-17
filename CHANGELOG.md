@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.1] - 2026-03-17
+
+### Added
+- `Apollo::Transport` module now extends `Legion::Extensions::Transport` to provide the `build` method expected by LegionIO's `build_transport` call
+
 ## [0.3.0] - 2026-03-17
 
 ### Added
