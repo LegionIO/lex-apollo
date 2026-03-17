@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.0] - 2026-03-17
+
+### Added
+- Contradiction detection: LLM-based conflict analysis during knowledge ingest via structured output
+- `detect_contradictions`: finds similar entries and checks for semantic conflicts, creates `contradicts` relations
+- `run_decay_cycle`: hourly confidence reduction with configurable rate (0.998 default) and archival threshold (0.1)
+- `GaiaIntegration.publish_insight`: auto-publish high-confidence insights from cognitive reflection phase
+- `GaiaIntegration.handle_mesh_departure`: knowledge vulnerability detection when agents leave the mesh
+
 ## [0.2.0] - 2026-03-16
 
 ### Added

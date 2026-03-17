@@ -21,6 +21,27 @@ module Legion
             { action: :resolve_dispute, entry_id: entry_id, resolution: resolution }
           end
 
+          def run_decay_cycle(rate: nil, min_confidence: nil, **)
+            rate ||= decay_rate
+            min_confidence ||= decay_threshold
+
+            return { decayed: 0, archived: 0 } unless defined?(Legion::Data) && Legion::Data.respond_to?(:connection) && Legion::Data.connection
+
+            conn = Legion::Data.connection
+            decayed = conn[:apollo_entries]
+                      .exclude(status: 'archived')
+                      .update(confidence: Sequel[:confidence] * rate)
+
+            archived = conn[:apollo_entries]
+                       .where { confidence < min_confidence }
+                       .exclude(status: 'archived')
+                       .update(status: 'archived')
+
+            { decayed: decayed, archived: archived, rate: rate, threshold: min_confidence }
+          rescue Sequel::Error => e
+            { decayed: 0, archived: 0, error: e.message }
+          end
+
           def check_corroboration(**)
             return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
 
@@ -62,6 +83,16 @@ module Legion
             { success: true, promoted: promoted, scanned: candidates.size }
           rescue Sequel::Error => e
             { success: false, error: e.message }
+          end
+
+          private
+
+          def decay_rate
+            (defined?(Legion::Settings) && Legion::Settings.dig(:apollo, :decay_rate)) || 0.998
+          end
+
+          def decay_threshold
+            (defined?(Legion::Settings) && Legion::Settings.dig(:apollo, :decay_threshold)) || 0.1
           end
 
           include Legion::Extensions::Helpers::Lex if defined?(Legion::Extensions::Helpers::Lex)

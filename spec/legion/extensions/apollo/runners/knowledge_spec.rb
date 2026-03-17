@@ -119,6 +119,8 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
           .and_return(Array.new(1536, 0.0))
 
         allow(mock_entry_class).to receive(:where).and_return(double(exclude: double(limit: empty_dataset)))
+        allow(mock_entry_class).to receive(:exclude)
+          .and_return(double(exclude: double(limit: double(all: []))))
         allow(mock_entry_class).to receive(:create).and_return(mock_entry)
         allow(mock_expertise_class).to receive(:where).and_return(double(first: nil))
         allow(mock_expertise_class).to receive(:create)

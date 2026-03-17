@@ -82,8 +82,10 @@ module Legion
               entry_id: existing_id, agent_id: source_agent, action: 'ingest'
             )
 
+            contradictions = detect_contradictions(existing_id, embedding, content)
+
             { success: true, entry_id: existing_id, status: corroborated ? 'corroborated' : 'candidate',
-              corroborated: corroborated }
+              corroborated: corroborated, contradictions: contradictions }
           rescue Sequel::Error => e
             { success: false, error: e.message }
           end
@@ -162,6 +164,49 @@ module Legion
           end
 
           private
+
+          def detect_contradictions(entry_id, embedding, content)
+            return [] unless embedding && defined?(Legion::Data::Model::ApolloEntry)
+
+            similar = Legion::Data::Model::ApolloEntry
+                      .exclude(id: entry_id)
+                      .exclude(embedding: nil)
+                      .limit(10).all
+
+            contradictions = []
+            similar.each do |existing|
+              sim = Helpers::Similarity.cosine_similarity(vec_a: embedding, vec_b: existing.embedding)
+              next unless sim > 0.7
+              next unless llm_detects_conflict?(content, existing.content)
+
+              Legion::Data::Model::ApolloRelation.create(
+                from_entry_id: entry_id, to_entry_id: existing.id,
+                relation_type: 'contradicts', source_agent: 'system:contradiction',
+                weight: 0.8
+              )
+
+              Legion::Data::Model::ApolloEntry.where(id: [entry_id, existing.id]).update(status: 'disputed')
+              contradictions << existing.id
+            end
+            contradictions
+          rescue Sequel::Error
+            []
+          end
+
+          def llm_detects_conflict?(content_a, content_b)
+            return false unless defined?(Legion::LLM) && Legion::LLM.respond_to?(:structured)
+
+            result = Legion::LLM.structured(
+              messages: [
+                { role: 'system', content: 'Do these two statements contradict each other? Return JSON.' },
+                { role: 'user', content: "A: #{content_a}\n\nB: #{content_b}" }
+              ],
+              schema:   { type: 'object', properties: { contradicts: { type: 'boolean' } } }
+            )
+            result[:data]&.dig(:contradicts) == true
+          rescue StandardError
+            false
+          end
 
           def find_corroboration(embedding, content_type_sym, source_agent)
             existing = Legion::Data::Model::ApolloEntry
