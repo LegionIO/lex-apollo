@@ -2,7 +2,7 @@
 
 **Parent**: `/Users/miverso2/rubymine/legion/extensions-agentic/CLAUDE.md`
 **Cognitive Concept**: Apollo (all human knowledge)
-**Version**: 0.1.0
+**Version**: 0.3.1
 
 ## What This Does
 
