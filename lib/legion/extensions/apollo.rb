@@ -7,6 +7,7 @@ require 'legion/extensions/apollo/helpers/graph_query'
 require 'legion/extensions/apollo/runners/knowledge'
 require 'legion/extensions/apollo/runners/expertise'
 require 'legion/extensions/apollo/runners/maintenance'
+require 'legion/extensions/apollo/runners/entity_extractor'
 
 if defined?(Legion::Transport)
   require 'legion/extensions/apollo/transport/exchanges/apollo'

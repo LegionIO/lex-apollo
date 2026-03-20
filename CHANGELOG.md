@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.3] - 2026-03-20
+
+### Added
+- `Runners::EntityExtractor`: LLM-backed structured extraction of people, services, repositories, and concepts from arbitrary text
+- `Actors::EntityWatchdog`: interval actor (120s) that reads recent task logs, extracts entities, deduplicates against Apollo, and publishes ingest messages for net-new entities
+- Settings support: `apollo.entity_watchdog.types`, `apollo.entity_watchdog.min_confidence`, `apollo.entity_watchdog.dedup_threshold`
+- Fallback behavior when `Legion::LLM` is unavailable (returns empty entity list, no error)
+
 ## [0.3.2] - 2026-03-20
 
 ### Changed
