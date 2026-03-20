@@ -38,4 +38,4 @@ Fires only when local memory lacks high-confidence matches.
 
 ## Design Doc
 
-`docs/plans/2026-03-15-apollo-shared-knowledge-design.md`
+`docs/work/completed/2026-03-15-apollo-shared-knowledge-design.md`
