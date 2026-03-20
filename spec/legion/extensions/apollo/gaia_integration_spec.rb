@@ -45,4 +45,29 @@ RSpec.describe Legion::Extensions::Apollo::GaiaIntegration do
       expect(result).to eq({ success: true })
     end
   end
+
+  describe 'entity watchdog phase handler' do
+    it 'detects entities from tick results' do
+      require 'legion/extensions/apollo/helpers/entity_watchdog'
+      tick_results = { content: 'Jane Doe deployed to https://api.example.com', tick_id: 'tick-1' }
+      entities = Legion::Extensions::Apollo::Helpers::EntityWatchdog.detect_entities(text: tick_results[:content])
+      expect(entities.size).to be >= 2
+    end
+
+    it 'links or creates entities from tick results' do
+      require 'legion/extensions/apollo/helpers/entity_watchdog'
+      tick_results = { content: 'Jane Doe at LegionIO/lex-mesh', tick_id: 'tick-2' }
+      entities = Legion::Extensions::Apollo::Helpers::EntityWatchdog.detect_entities(text: tick_results[:content])
+      result = Legion::Extensions::Apollo::Helpers::EntityWatchdog.link_or_create(
+        entities: entities, source_context: tick_results[:tick_id]
+      )
+      expect(result[:success]).to be true
+    end
+
+    it 'entry point has entity watchdog registration block' do
+      entry_point = File.read(File.expand_path('../../../../lib/legion/extensions/apollo.rb', __dir__))
+      expect(entry_point).to include('entity_watchdog')
+      expect(entry_point).to include('PhaseWiring.register_handler(:post_tick_reflection)')
+    end
+  end
 end

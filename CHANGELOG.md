@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.4] - 2026-03-20
+
+### Added
+- `Helpers::EntityWatchdog`: regex-based entity detection for persons, services, repos, and configurable concepts
+- GAIA `post_tick_reflection` handler for passive entity detection (enabled via `apollo.entity_watchdog.enabled`)
+- Deduplication by type+value, configurable type filtering, and `link_or_create` for Apollo integration
+
 ## [0.3.3] - 2026-03-20
 
 ### Added
