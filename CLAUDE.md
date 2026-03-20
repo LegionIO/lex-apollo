@@ -1,6 +1,9 @@
 # lex-apollo: Shared Knowledge Store
 
-**Parent**: `/Users/miverso2/rubymine/legion/extensions-agentic/CLAUDE.md`
+**Level 3 Documentation**
+- **Parent**: `/Users/miverso2/rubymine/legion/extensions-agentic/CLAUDE.md`
+- **Grandparent**: `/Users/miverso2/rubymine/legion/CLAUDE.md`
+
 **Cognitive Concept**: Apollo (all human knowledge)
 **Version**: 0.3.1
 
@@ -21,7 +24,7 @@ Shared durable knowledge store for the GAIA cognitive mesh. Agents write confirm
 | `helpers/confidence.rb` | Constants, decay math, boost logic, write gates |
 | `helpers/similarity.rb` | Cosine similarity, corroboration threshold, match classification |
 | `helpers/graph_query.rb` | SQL builders for recursive CTE traversal and vector search |
-| `runners/knowledge.rb` | store_knowledge, query_knowledge, related_entries, deprecate_entry |
+| `runners/knowledge.rb` | store_knowledge, query_knowledge, related_entries, deprecate_entry, handle_ingest, handle_query, retrieve_relevant |
 | `runners/expertise.rb` | get_expertise, domains_at_risk, agent_profile |
 | `runners/maintenance.rb` | force_decay, archive_stale, resolve_dispute |
 | `actors/ingest.rb` | Subscription: receives knowledge, generates embeddings, persists |

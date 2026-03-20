@@ -26,40 +26,41 @@ gem 'lex-apollo'
 ```ruby
 require 'legion/extensions/apollo'
 
-client = Legion::Extensions::Apollo::Client.new(agent_id: 'my-agent-001')
+client = Legion::Extensions::Apollo::Client.new
 
-# Store a confirmed knowledge entry
+# Build a store payload (published to RabbitMQ for the Apollo service to persist)
 client.store_knowledge(
-  domain: 'networking',
-  content: 'BGP route reflectors reduce full-mesh IBGP complexity',
-  confidence: 0.9,
-  source_agent_id: 'my-agent-001',
-  tags: ['bgp', 'routing', 'ibgp']
+  content:      'BGP route reflectors reduce full-mesh IBGP complexity',
+  content_type: :fact,
+  source_agent: 'my-agent-001',
+  tags:         ['bgp', 'routing', 'ibgp'],
+  context:      { source: 'network_team_wiki' }
 )
 
-# Query for relevant knowledge
+# Build a query payload
 client.query_knowledge(
-  query: 'BGP route reflector configuration',
-  domain: 'networking',
+  query:          'BGP route reflector configuration',
   min_confidence: 0.6,
-  limit: 10
+  limit:          10
 )
 
 # Get related entries (concept graph traversal)
-client.related_entries(entry_id: 'entry-uuid', max_hops: 2)
+client.related_entries(entry_id: 'entry-uuid', depth: 2)
 
 # Deprecate a stale entry
 client.deprecate_entry(entry_id: 'entry-uuid', reason: 'superseded by RFC 7938')
 ```
 
+Content types: `:fact`, `:concept`, `:procedure`, `:association`, `:observation`
+
 ### Expertise Queries
 
 ```ruby
 # Get proficiency scores for a domain
-client.get_expertise(domain: 'networking', agent_id: 'my-agent-001')
+client.get_expertise(domain: 'networking', min_proficiency: 0.3)
 
-# Find domains where knowledge coverage is thin
-client.domains_at_risk(min_entries: 5, min_confidence: 0.7)
+# Find domains where coverage is thin (below min agent count)
+client.domains_at_risk(min_agents: 2)
 
 # Full agent knowledge profile
 client.agent_profile(agent_id: 'my-agent-001')
@@ -68,11 +69,11 @@ client.agent_profile(agent_id: 'my-agent-001')
 ### Maintenance
 
 ```ruby
-# Force confidence decay cycle
-client.force_decay(domain: 'networking')
+# Force confidence decay cycle (factor multiplied against each entry's confidence)
+client.force_decay(factor: 0.5)
 
-# Archive entries below confidence threshold
-client.archive_stale(max_confidence: 0.2)
+# Archive entries older than N days
+client.archive_stale(days: 90)
 
 # Resolve a corroboration dispute
 client.resolve_dispute(entry_id: 'entry-uuid', resolution: :accept)
@@ -104,12 +105,13 @@ Apollo is wired into the GAIA tick cycle at the `knowledge_retrieval` phase (pha
 
 Entries have a confidence score between 0.0 and 1.0:
 
-- New entries start at the caller-supplied confidence value
-- Corroboration from multiple agents boosts confidence
-- Entries below `WRITE_GATE_THRESHOLD` are rejected on ingest
-- Confidence decays hourly; entries below `ARCHIVE_THRESHOLD` are archived
+- New entries start at `INITIAL_CONFIDENCE` (0.5) with status `candidate`
+- Corroboration from a semantically similar entry (cosine > 0.9) boosts confidence by 0.3 and promotes to `confirmed`
+- Each retrieval adds a small boost (+0.02, capped at 1.0)
+- Confidence decays hourly by factor 0.998; entries below 0.1 are archived
+- The GAIA write gate (`meets_write_gate?`) requires confidence > 0.6 and novelty > 0.3 for the tick write-back path
 
-See `helpers/confidence.rb` for decay constants and boost logic.
+See `helpers/confidence.rb` for all constants and math helpers.
 
 ## Requirements
 
