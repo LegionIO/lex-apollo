@@ -8,7 +8,7 @@ module Legion
           INITIAL_CONFIDENCE = 0.5
           CORROBORATION_BOOST = 0.3
           RETRIEVAL_BOOST = 0.02
-          HOURLY_DECAY_FACTOR = 0.998
+          POWER_LAW_ALPHA = 0.1
           DECAY_THRESHOLD = 0.1
           CORROBORATION_SIMILARITY_THRESHOLD = 0.9
           WRITE_CONFIDENCE_GATE = 0.6
@@ -20,16 +20,21 @@ module Legion
 
           module_function
 
-          def apply_decay(confidence:, factor: HOURLY_DECAY_FACTOR, **)
-            [confidence * factor, 0.0].max
+          def apply_decay(confidence:, age_hours: nil, alpha: POWER_LAW_ALPHA, **)
+            if age_hours
+              [confidence * ((age_hours.clamp(0, Float::INFINITY) + 2.0)**(-alpha)) / ((age_hours.clamp(0, Float::INFINITY) + 1.0)**(-alpha)), 0.0].max
+            else
+              factor = 1.0 / (1.0 + alpha)
+              [confidence * factor, 0.0].max
+            end
           end
 
           def apply_retrieval_boost(confidence:, **)
             [confidence + RETRIEVAL_BOOST, 1.0].min
           end
 
-          def apply_corroboration_boost(confidence:, **)
-            [confidence + CORROBORATION_BOOST, 1.0].min
+          def apply_corroboration_boost(confidence:, weight: 1.0, **)
+            [confidence + (CORROBORATION_BOOST * weight), 1.0].min
           end
 
           def decayed?(confidence:, **)

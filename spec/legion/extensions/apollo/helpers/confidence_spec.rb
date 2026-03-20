@@ -17,8 +17,8 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Confidence do
       expect(described_class::RETRIEVAL_BOOST).to eq(0.02)
     end
 
-    it 'defines HOURLY_DECAY_FACTOR' do
-      expect(described_class::HOURLY_DECAY_FACTOR).to eq(0.998)
+    it 'defines POWER_LAW_ALPHA' do
+      expect(described_class::POWER_LAW_ALPHA).to eq(0.1)
     end
 
     it 'defines DECAY_THRESHOLD' do
@@ -43,19 +43,27 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Confidence do
   end
 
   describe '.apply_decay' do
-    it 'multiplies confidence by HOURLY_DECAY_FACTOR' do
+    it 'applies power-law decay with default alpha when no age given' do
       result = described_class.apply_decay(confidence: 1.0)
-      expect(result).to eq(0.998)
+      expected = 1.0 / (1.0 + 0.1) # ~0.909091
+      expect(result).to be_within(0.0001).of(expected)
     end
 
-    it 'accepts a custom factor' do
-      result = described_class.apply_decay(confidence: 1.0, factor: 0.5)
-      expect(result).to eq(0.5)
+    it 'applies age-based power-law decay when age_hours is provided' do
+      result = described_class.apply_decay(confidence: 1.0, age_hours: 10)
+      expect(result).to be > 0.0
+      expect(result).to be < 1.0
     end
 
     it 'clamps to 0.0 minimum' do
-      result = described_class.apply_decay(confidence: 0.001, factor: 0.001)
+      result = described_class.apply_decay(confidence: 0.001)
       expect(result).to be >= 0.0
+    end
+
+    it 'accepts a custom alpha' do
+      result = described_class.apply_decay(confidence: 1.0, alpha: 0.5)
+      expected = 1.0 / (1.0 + 0.5) # ~0.6667
+      expect(result).to be_within(0.0001).of(expected)
     end
   end
 
@@ -80,6 +88,11 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Confidence do
     it 'clamps to 1.0 maximum' do
       result = described_class.apply_corroboration_boost(confidence: 0.9)
       expect(result).to eq(1.0)
+    end
+
+    it 'applies half weight for same-source corroboration' do
+      result = described_class.apply_corroboration_boost(confidence: 0.5, weight: 0.5)
+      expect(result).to eq(0.65)
     end
   end
 

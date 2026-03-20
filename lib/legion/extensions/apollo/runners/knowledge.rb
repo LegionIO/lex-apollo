@@ -53,7 +53,7 @@ module Legion
             }
           end
 
-          def handle_ingest(content:, content_type:, tags: [], source_agent: 'unknown', context: {}, **)
+          def handle_ingest(content:, content_type:, tags: [], source_agent: 'unknown', source_provider: nil, context: {}, **) # rubocop:disable Metrics/ParameterLists
             return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
 
             embedding = Helpers::Embedding.generate(text: content)
@@ -64,14 +64,15 @@ module Legion
 
             unless corroborated
               new_entry = Legion::Data::Model::ApolloEntry.create(
-                content:        content,
-                content_type:   content_type_sym,
-                confidence:     Helpers::Confidence::INITIAL_CONFIDENCE,
-                source_agent:   source_agent,
-                source_context: ::JSON.dump(context.is_a?(Hash) ? context : {}),
-                tags:           Sequel.pg_array(tag_array),
-                status:         'candidate',
-                embedding:      Sequel.lit("'[#{embedding.join(',')}]'::vector")
+                content:         content,
+                content_type:    content_type_sym,
+                confidence:      Helpers::Confidence::INITIAL_CONFIDENCE,
+                source_agent:    source_agent,
+                source_provider: source_provider || derive_provider_from_agent(source_agent),
+                source_context:  ::JSON.dump(context.is_a?(Hash) ? context : {}),
+                tags:            Sequel.pg_array(tag_array),
+                status:          'candidate',
+                embedding:       Sequel.lit("'[#{embedding.join(',')}]'::vector")
               )
               existing_id = new_entry.id
             end
@@ -220,8 +221,9 @@ module Legion
               sim = Helpers::Similarity.cosine_similarity(vec_a: embedding, vec_b: entry.embedding)
               next unless Helpers::Similarity.above_corroboration_threshold?(similarity: sim)
 
+              weight = same_source_provider?(source_agent, entry) ? 0.5 : 1.0
               entry.update(
-                confidence: Helpers::Confidence.apply_corroboration_boost(confidence: entry.confidence),
+                confidence: Helpers::Confidence.apply_corroboration_boost(confidence: entry.confidence, weight: weight),
                 updated_at: Time.now
               )
               Legion::Data::Model::ApolloRelation.create(
@@ -235,6 +237,20 @@ module Legion
             end
 
             [false, nil]
+          end
+
+          def same_source_provider?(submitting_agent, entry)
+            stored = entry.respond_to?(:source_provider) ? entry.source_provider : nil
+            return false if stored.nil? || stored.to_s.empty? || stored.to_s == 'unknown'
+
+            derive_provider_from_agent(submitting_agent) == stored.to_s
+          end
+
+          def derive_provider_from_agent(source_agent)
+            return 'unknown' if source_agent.nil? || source_agent == 'unknown'
+
+            provider = source_agent.to_s.split(/[-_]/).first.downcase
+            %w[claude openai gemini human system].include?(provider) ? provider : 'unknown'
           end
 
           def upsert_expertise(source_agent:, domain:)

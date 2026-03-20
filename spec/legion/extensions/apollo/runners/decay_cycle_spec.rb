@@ -13,8 +13,9 @@ RSpec.describe 'Apollo Decay Cycle' do
   end
 
   describe '#decay_rate' do
-    it 'returns default rate when settings unavailable' do
-      expect(maintenance.send(:decay_rate)).to eq(0.998)
+    it 'returns power-law derived rate when settings unavailable' do
+      expected = 1.0 / (1.0 + 0.1) # ~0.909091
+      expect(maintenance.send(:decay_rate)).to be_within(0.0001).of(expected)
     end
   end
 

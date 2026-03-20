@@ -62,6 +62,11 @@ module Legion
 
               next unless match
 
+              candidate_provider = candidate.respond_to?(:source_provider) ? candidate.source_provider : nil
+              match_provider     = match.respond_to?(:source_provider) ? match.source_provider : nil
+              both_known = known_provider?(candidate_provider) && known_provider?(match_provider)
+              next if both_known && candidate_provider == match_provider
+
               candidate.update(
                 status:       'confirmed',
                 confirmed_at: Time.now,
@@ -88,7 +93,13 @@ module Legion
           private
 
           def decay_rate
-            (defined?(Legion::Settings) && Legion::Settings.dig(:apollo, :decay_rate)) || 0.998
+            alpha = (defined?(Legion::Settings) && Legion::Settings.dig(:apollo, :power_law_alpha)) ||
+                    Helpers::Confidence::POWER_LAW_ALPHA
+            1.0 / (1.0 + alpha)
+          end
+
+          def known_provider?(provider)
+            !provider.nil? && !provider.to_s.empty? && provider.to_s != 'unknown'
           end
 
           def decay_threshold

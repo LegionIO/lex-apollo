@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.2] - 2026-03-20
+
+### Changed
+- Replace exponential confidence decay (`confidence * 0.998`) with power-law decay
+  (`confidence / (1 + alpha)` per tick, where `alpha` defaults to 0.1)
+- Configurable via `apollo.power_law_alpha` setting (default: 0.1)
+- Source diversity enforcement in corroboration: same-source corroboration (matching
+  `source_provider`) receives 50% boost weight instead of full weight
+- `check_corroboration` skips auto-promotion when both candidate and match have
+  the same known `source_provider` (correlated error prevention)
+- `apply_corroboration_boost` accepts optional `weight:` kwarg (default: 1.0)
+
+### Added
+- `source_provider` field populated on ingest via explicit kwarg or agent name inference
+- `handle_ingest` accepts `source_provider:` kwarg; derives provider from agent name
+  convention when not explicitly provided
+
 ## [0.3.1] - 2026-03-17
 
 ### Added
