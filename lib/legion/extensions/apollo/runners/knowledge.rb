@@ -130,6 +130,39 @@ module Legion
             { success: false, error: e.message }
           end
 
+          def redistribute_knowledge(agent_id:, min_confidence: 0.5, **)
+            return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
+
+            entries = Legion::Data::Model::ApolloEntry
+                      .where(source_agent: agent_id, status: 'confirmed')
+                      .where { confidence > min_confidence }
+                      .all
+
+            return { success: true, redistributed: 0 } if entries.empty?
+
+            store = (Legion::Extensions::Agentic::Memory::Trace.shared_store if defined?(Legion::Extensions::Agentic::Memory::Trace))
+
+            redistributed = 0
+            entries.each do |entry|
+              if store
+                trace = Legion::Extensions::Agentic::Memory::Trace::Helpers::Trace.new_trace(
+                  type:            :semantic,
+                  content_payload: { content: entry.content, source_agent: agent_id,
+                                     content_type: entry.content_type, tags: Array(entry.tags) },
+                  strength:        entry.confidence.to_f,
+                  domain_tag:      Array(entry.tags).first || 'general'
+                )
+                store.store(trace)
+              end
+              redistributed += 1
+            end
+
+            Legion::Logging.info "[apollo] redistributed #{redistributed} entries from departing agent=#{agent_id}"
+            { success: true, redistributed: redistributed, agent_id: agent_id }
+          rescue Sequel::Error => e
+            { success: false, error: e.message }
+          end
+
           def retrieve_relevant(query: nil, limit: 5, min_confidence: 0.3, tags: nil, skip: false, **)
             return { status: :skipped } if skip
 

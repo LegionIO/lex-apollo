@@ -307,4 +307,88 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
       end
     end
   end
+
+  describe '#redistribute_knowledge' do
+    let(:host) { Object.new.extend(described_class) }
+
+    context 'when Apollo data is not available' do
+      before { hide_const('Legion::Data::Model::ApolloEntry') if defined?(Legion::Data::Model::ApolloEntry) }
+
+      it 'returns a structured error' do
+        result = host.redistribute_knowledge(agent_id: 'agent-x')
+        expect(result[:success]).to be false
+        expect(result[:error]).to eq('apollo_data_not_available')
+      end
+    end
+
+    context 'when the departing agent has no confirmed entries' do
+      let(:mock_entry_class) { double('ApolloEntry') }
+
+      before do
+        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
+        chain = double('chain')
+        allow(mock_entry_class).to receive(:where).and_return(chain)
+        allow(chain).to receive(:where).and_return(double(all: []))
+      end
+
+      it 'returns success with zero redistributed' do
+        result = host.redistribute_knowledge(agent_id: 'departed-1')
+        expect(result[:success]).to be true
+        expect(result[:redistributed]).to eq(0)
+      end
+    end
+
+    context 'when the departing agent has confirmed entries' do
+      let(:mock_entry_class) { double('ApolloEntry') }
+      let(:mock_entry) do
+        double('entry', content: 'Ruby is fast', content_type: 'fact',
+                        confidence: 0.8, tags: ['ruby'])
+      end
+
+      before do
+        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
+        chain = double('chain')
+        allow(mock_entry_class).to receive(:where).and_return(chain)
+        allow(chain).to receive(:where).and_return(double(all: [mock_entry]))
+      end
+
+      it 'returns the count of redistributed entries' do
+        result = host.redistribute_knowledge(agent_id: 'departed-2')
+        expect(result[:success]).to be true
+        expect(result[:redistributed]).to eq(1)
+        expect(result[:agent_id]).to eq('departed-2')
+      end
+
+      it 'stores into trace shared_store when Memory::Trace is available' do
+        mock_store = double('store')
+        mock_trace_helpers = Module.new do
+          def self.new_trace(type:, content_payload: nil, **kwargs) # rubocop:disable Lint/UnusedMethodArgument
+            { trace_id: 'trace-abc', trace_type: type, strength: kwargs[:strength] || 0.5 }
+          end
+        end
+        stub_const('Legion::Extensions::Agentic::Memory::Trace', Module.new)
+        stub_const('Legion::Extensions::Agentic::Memory::Trace::Helpers::Trace', mock_trace_helpers)
+        allow(Legion::Extensions::Agentic::Memory::Trace).to receive(:shared_store).and_return(mock_store)
+        allow(mock_store).to receive(:store)
+
+        result = host.redistribute_knowledge(agent_id: 'departed-3')
+        expect(result[:redistributed]).to eq(1)
+        expect(mock_store).to have_received(:store).once
+      end
+    end
+
+    context 'when Sequel raises an error' do
+      before do
+        stub_const('Legion::Data::Model::ApolloEntry', Class.new)
+        allow(Legion::Data::Model::ApolloEntry).to receive(:where)
+          .and_raise(Sequel::Error, 'db error')
+      end
+
+      it 'returns a structured error' do
+        result = host.redistribute_knowledge(agent_id: 'agent-x')
+        expect(result[:success]).to be false
+        expect(result[:error]).to eq('db error')
+      end
+    end
+  end
 end
