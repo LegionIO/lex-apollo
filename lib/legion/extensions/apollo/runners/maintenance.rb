@@ -21,28 +21,40 @@ module Legion
             { action: :resolve_dispute, entry_id: entry_id, resolution: resolution }
           end
 
-          def run_decay_cycle(rate: nil, min_confidence: nil, **)
-            rate ||= decay_rate
+          def run_decay_cycle(alpha: nil, min_confidence: nil, **)
+            alpha ||= decay_alpha
             min_confidence ||= decay_threshold
 
             return { decayed: 0, archived: 0 } unless defined?(Legion::Data) && Legion::Data.respond_to?(:connection) && Legion::Data.connection
 
             conn = Legion::Data.connection
+
+            # Power-law: per-cycle decay factor decreases as entries age
+            # Factor = (hours_old / (hours_old + 1)) ^ alpha
+            # Recent entries (small hours_old) get a factor closer to 0 (more decay)
+            # Old entries (large hours_old) get a factor closer to 1 (less decay)
+            hours_expr = Sequel.lit(
+              'GREATEST(EXTRACT(EPOCH FROM (NOW() - COALESCE(updated_at, created_at))) / 3600.0, 1.0)'
+            )
+            decay_factor = Sequel.lit(
+              'POWER(CAST(? AS double precision) / (CAST(? AS double precision) + 1.0), ?)', hours_expr, hours_expr, alpha
+            )
+
             decayed = conn[:apollo_entries]
                       .exclude(status: 'archived')
-                      .update(confidence: Sequel[:confidence] * rate)
+                      .update(confidence: Sequel[:confidence] * decay_factor)
 
             archived = conn[:apollo_entries]
                        .where { confidence < min_confidence }
                        .exclude(status: 'archived')
                        .update(status: 'archived')
 
-            { decayed: decayed, archived: archived, rate: rate, threshold: min_confidence }
+            { decayed: decayed, archived: archived, alpha: alpha, threshold: min_confidence }
           rescue Sequel::Error => e
             { decayed: 0, archived: 0, error: e.message }
           end
 
-          def check_corroboration(**)
+          def check_corroboration(**) # rubocop:disable Metrics/CyclomaticComplexity
             return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
 
             candidates = Legion::Data::Model::ApolloEntry.where(status: 'candidate').exclude(embedding: nil).all
@@ -66,6 +78,11 @@ module Legion
               match_provider     = match.respond_to?(:source_provider) ? match.source_provider : nil
               both_known = known_provider?(candidate_provider) && known_provider?(match_provider)
               next if both_known && candidate_provider == match_provider
+
+              # Also reject if same source_channel (same data pipeline)
+              candidate_channel = candidate.respond_to?(:source_channel) ? candidate.source_channel : nil
+              match_channel = match.respond_to?(:source_channel) ? match.source_channel : nil
+              next if candidate_channel && match_channel && candidate_channel == match_channel
 
               candidate.update(
                 status:       'confirmed',
@@ -92,10 +109,9 @@ module Legion
 
           private
 
-          def decay_rate
-            alpha = (defined?(Legion::Settings) && Legion::Settings.dig(:apollo, :power_law_alpha)) ||
-                    Helpers::Confidence::POWER_LAW_ALPHA
-            1.0 / (1.0 + alpha)
+          def decay_alpha
+            (defined?(Legion::Settings) && Legion::Settings.dig(:apollo, :power_law_alpha)) ||
+              Helpers::Confidence::POWER_LAW_ALPHA
           end
 
           def known_provider?(provider)

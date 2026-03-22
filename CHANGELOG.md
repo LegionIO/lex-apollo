@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.6] - 2026-03-21
+
+### Added
+- Time-aware power-law decay in batch cycle (alpha=0.5 per Murre & Dros 2015)
+- Source channel diversity enforcement in corroboration paths
+- Right-to-erasure propagation via handle_erasure_request
+- Knowledge domain namespaces with query filtering
+- Domain-aware mesh propagation filtering (prepare_mesh_export)
+
+### Changed
+- POWER_LAW_ALPHA updated from 0.1 to 0.5
+- run_decay_cycle uses time-aware SQL instead of flat multiplier
+
 ## [0.3.4] - 2026-03-20
 
 ### Added

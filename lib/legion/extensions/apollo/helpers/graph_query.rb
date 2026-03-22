@@ -44,7 +44,7 @@ module Legion
             SQL
           end
 
-          def build_semantic_search_sql(limit: 10, min_confidence: 0.3, statuses: nil, tags: nil, **)
+          def build_semantic_search_sql(limit: 10, min_confidence: 0.3, statuses: nil, tags: nil, domain: nil, **)
             conditions = ["e.confidence >= #{min_confidence}"]
 
             if statuses&.any?
@@ -57,11 +57,13 @@ module Legion
               conditions << "e.tags && ARRAY[#{tag_list}]::text[]"
             end
 
+            conditions << "e.knowledge_domain = '#{domain}'" if domain
+
             where_clause = conditions.join(' AND ')
 
             <<~SQL
               SELECT e.id, e.content, e.content_type, e.confidence, e.tags, e.source_agent,
-                     e.access_count, e.created_at,
+                     e.access_count, e.created_at, e.knowledge_domain,
                      (e.embedding <=> $embedding) AS distance
               FROM apollo_entries e
               WHERE #{where_clause}

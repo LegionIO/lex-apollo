@@ -17,9 +17,13 @@ unless defined?(Sequel)
     class Error < StandardError; end
 
     def self.pg_array(arr) = arr
-    def self.lit(str) = str
-    Expr = Struct.new(:value) { def +(other) = "#{value} + #{other}" }
+    def self.lit(str, *) = str
+    Expr = Struct.new(:value) do
+      def +(other) = "#{value} + #{other}"
+      def *(other) = "#{value} * #{other}"
+    end
     def self.expr(sym) = Expr.new(sym)
+    def self.[](sym) = Expr.new(sym)
   end
 end
 

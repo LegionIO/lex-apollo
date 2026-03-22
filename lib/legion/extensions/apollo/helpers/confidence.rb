@@ -8,7 +8,7 @@ module Legion
           INITIAL_CONFIDENCE = 0.5
           CORROBORATION_BOOST = 0.3
           RETRIEVAL_BOOST = 0.02
-          POWER_LAW_ALPHA = 0.1
+          POWER_LAW_ALPHA = 0.5
           DECAY_THRESHOLD = 0.1
           CORROBORATION_SIMILARITY_THRESHOLD = 0.9
           WRITE_CONFIDENCE_GATE = 0.6

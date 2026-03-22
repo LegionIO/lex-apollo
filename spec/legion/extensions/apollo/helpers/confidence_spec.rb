@@ -18,7 +18,7 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Confidence do
     end
 
     it 'defines POWER_LAW_ALPHA' do
-      expect(described_class::POWER_LAW_ALPHA).to eq(0.1)
+      expect(described_class::POWER_LAW_ALPHA).to eq(0.5)
     end
 
     it 'defines DECAY_THRESHOLD' do
@@ -45,7 +45,7 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Confidence do
   describe '.apply_decay' do
     it 'applies power-law decay with default alpha when no age given' do
       result = described_class.apply_decay(confidence: 1.0)
-      expected = 1.0 / (1.0 + 0.1) # ~0.909091
+      expected = 1.0 / (1.0 + 0.5) # ~0.6667
       expect(result).to be_within(0.0001).of(expected)
     end
 

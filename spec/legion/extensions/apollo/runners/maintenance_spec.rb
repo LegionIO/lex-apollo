@@ -37,6 +37,58 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Maintenance do
     end
   end
 
+  describe '#run_decay_cycle' do
+    let(:host) { Object.new.extend(described_class) }
+
+    context 'when Legion::Data is not available' do
+      before { hide_const('Legion::Data') if defined?(Legion::Data) }
+
+      it 'returns zero counts' do
+        result = host.run_decay_cycle
+        expect(result[:decayed]).to eq(0)
+        expect(result[:archived]).to eq(0)
+      end
+    end
+
+    context 'when data is available' do
+      let(:mock_conn) { double('connection') }
+      let(:mock_dataset) { double('dataset') }
+
+      before do
+        data_mod = Module.new do
+          def self.connection; end
+
+          def self.respond_to?(method, *args)
+            method == :connection || super
+          end
+        end
+        stub_const('Legion::Data', data_mod)
+        allow(Legion::Data).to receive(:connection).and_return(mock_conn)
+        allow(mock_conn).to receive(:[]).with(:apollo_entries).and_return(mock_dataset)
+        allow(mock_dataset).to receive(:exclude).and_return(mock_dataset)
+        allow(mock_dataset).to receive(:where).and_return(mock_dataset)
+        allow(mock_dataset).to receive(:update).and_return(5)
+      end
+
+      it 'returns alpha in result hash' do
+        result = host.run_decay_cycle
+        expect(result[:alpha]).to eq(0.5)
+        expect(result).not_to have_key(:rate)
+      end
+
+      it 'returns decayed and archived counts' do
+        result = host.run_decay_cycle
+        expect(result[:decayed]).to eq(5)
+        expect(result[:archived]).to eq(5)
+      end
+
+      it 'accepts custom alpha parameter' do
+        result = host.run_decay_cycle(alpha: 0.3)
+        expect(result[:alpha]).to eq(0.3)
+      end
+    end
+  end
+
   describe '#check_corroboration' do
     let(:host) { Object.new.extend(described_class) }
 
@@ -103,6 +155,34 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Maintenance do
           hash_including(from_entry_id: 'c-1', to_entry_id: 'f-1', relation_type: 'similar_to')
         )
         host.check_corroboration
+      end
+    end
+
+    context 'when candidate and confirmed share the same source_channel' do
+      let(:mock_entry_class) { double('ApolloEntry') }
+      let(:mock_relation_class) { double('ApolloRelation') }
+      let(:embedding) { Array.new(1536, 0.5) }
+      let(:candidate) do
+        double('candidate', id: 'c-1', content_type: 'fact', embedding: embedding,
+               confidence: 0.5, source_provider: 'openai', source_channel: 'slack-alerts')
+      end
+      let(:confirmed_entry) do
+        double('confirmed', id: 'f-1', content_type: 'fact', embedding: embedding,
+               source_provider: 'claude', source_channel: 'slack-alerts')
+      end
+
+      before do
+        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
+        stub_const('Legion::Data::Model::ApolloRelation', mock_relation_class)
+        allow(mock_entry_class).to receive(:where).with(status: 'candidate')
+                                                  .and_return(double(exclude: double(all: [candidate])))
+        allow(mock_entry_class).to receive(:where).with(status: 'confirmed')
+                                                  .and_return(double(exclude: double(all: [confirmed_entry])))
+      end
+
+      it 'does not promote even with different providers' do
+        result = host.check_corroboration
+        expect(result[:promoted]).to eq(0)
       end
     end
 

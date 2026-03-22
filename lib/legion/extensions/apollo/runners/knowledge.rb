@@ -9,6 +9,12 @@ module Legion
     module Apollo
       module Runners
         module Knowledge
+          DOMAIN_ISOLATION = {
+            'claims_optimization' => ['claims_optimization'],
+            'clinical_care'       => %w[clinical_care general],
+            'general'             => :all
+          }.freeze
+
           def store_knowledge(content:, content_type:, tags: [], source_agent: nil, context: {}, **)
             content_type = content_type.to_sym
             unless Helpers::Confidence::CONTENT_TYPES.include?(content_type)
@@ -53,31 +59,34 @@ module Legion
             }
           end
 
-          def handle_ingest(content:, content_type:, tags: [], source_agent: 'unknown', source_provider: nil, context: {}, **) # rubocop:disable Metrics/ParameterLists
+          def handle_ingest(content:, content_type:, tags: [], source_agent: 'unknown', source_provider: nil, source_channel: nil, knowledge_domain: nil, context: {}, **) # rubocop:disable Metrics/ParameterLists, Layout/LineLength
             return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
 
             embedding = Helpers::Embedding.generate(text: content)
             content_type_sym = content_type.to_s
             tag_array = Array(tags)
+            domain = knowledge_domain || tag_array.first || 'general'
 
-            corroborated, existing_id = find_corroboration(embedding, content_type_sym, source_agent)
+            corroborated, existing_id = find_corroboration(embedding, content_type_sym, source_agent, source_channel)
 
             unless corroborated
               new_entry = Legion::Data::Model::ApolloEntry.create(
-                content:         content,
-                content_type:    content_type_sym,
-                confidence:      Helpers::Confidence::INITIAL_CONFIDENCE,
-                source_agent:    source_agent,
-                source_provider: source_provider || derive_provider_from_agent(source_agent),
-                source_context:  ::JSON.dump(context.is_a?(Hash) ? context : {}),
-                tags:            Sequel.pg_array(tag_array),
-                status:          'candidate',
-                embedding:       Sequel.lit("'[#{embedding.join(',')}]'::vector")
+                content:          content,
+                content_type:     content_type_sym,
+                confidence:       Helpers::Confidence::INITIAL_CONFIDENCE,
+                source_agent:     source_agent,
+                source_provider:  source_provider || derive_provider_from_agent(source_agent),
+                source_channel:   source_channel,
+                source_context:   ::JSON.dump(context.is_a?(Hash) ? context : {}),
+                tags:             Sequel.pg_array(tag_array),
+                status:           'candidate',
+                knowledge_domain: domain,
+                embedding:        Sequel.lit("'[#{embedding.join(',')}]'::vector")
               )
               existing_id = new_entry.id
             end
 
-            upsert_expertise(source_agent: source_agent, domain: tag_array.first || 'general')
+            upsert_expertise(source_agent: source_agent, domain: domain)
 
             Legion::Data::Model::ApolloAccessLog.create(
               entry_id: existing_id, agent_id: source_agent, action: 'ingest'
@@ -91,13 +100,13 @@ module Legion
             { success: false, error: e.message }
           end
 
-          def handle_query(query:, limit: 10, min_confidence: 0.3, status: [:confirmed], tags: nil, agent_id: 'unknown', **) # rubocop:disable Metrics/ParameterLists
+          def handle_query(query:, limit: 10, min_confidence: 0.3, status: [:confirmed], tags: nil, domain: nil, agent_id: 'unknown', **) # rubocop:disable Metrics/ParameterLists
             return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
 
             embedding = Helpers::Embedding.generate(text: query)
             sql = Helpers::GraphQuery.build_semantic_search_sql(
               limit: limit, min_confidence: min_confidence,
-              statuses: Array(status).map(&:to_s), tags: tags
+              statuses: Array(status).map(&:to_s), tags: tags, domain: domain
             )
 
             db = Legion::Data::Model::ApolloEntry.db
@@ -122,7 +131,8 @@ module Legion
             formatted = entries.map do |entry|
               { id: entry[:id], content: entry[:content], content_type: entry[:content_type],
                 confidence: entry[:confidence], distance: entry[:distance],
-                tags: entry[:tags], source_agent: entry[:source_agent] }
+                tags: entry[:tags], source_agent: entry[:source_agent],
+                knowledge_domain: entry[:knowledge_domain] }
             end
 
             { success: true, entries: formatted, count: formatted.size }
@@ -163,7 +173,7 @@ module Legion
             { success: false, error: e.message }
           end
 
-          def retrieve_relevant(query: nil, limit: 5, min_confidence: 0.3, tags: nil, skip: false, **)
+          def retrieve_relevant(query: nil, limit: 5, min_confidence: 0.3, tags: nil, domain: nil, skip: false, **) # rubocop:disable Metrics/ParameterLists
             return { status: :skipped } if skip
 
             return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
@@ -173,7 +183,7 @@ module Legion
             embedding = Helpers::Embedding.generate(text: query.to_s)
             sql = Helpers::GraphQuery.build_semantic_search_sql(
               limit: limit, min_confidence: min_confidence,
-              statuses: ['confirmed'], tags: tags
+              statuses: ['confirmed'], tags: tags, domain: domain
             )
 
             db = Legion::Data::Model::ApolloEntry.db
@@ -189,7 +199,8 @@ module Legion
             formatted = entries.map do |entry|
               { id: entry[:id], content: entry[:content], content_type: entry[:content_type],
                 confidence: entry[:confidence], distance: entry[:distance],
-                tags: entry[:tags], source_agent: entry[:source_agent] }
+                tags: entry[:tags], source_agent: entry[:source_agent],
+                knowledge_domain: entry[:knowledge_domain] }
             end
 
             { success: true, entries: formatted, count: formatted.size }
@@ -197,7 +208,71 @@ module Legion
             { success: false, error: e.message }
           end
 
+          def prepare_mesh_export(target_domain:, min_confidence: 0.5, limit: 100, **)
+            unless defined?(Legion::Data) && Legion::Data.respond_to?(:connection) && Legion::Data.connection
+              return { success: false, error: 'apollo_data_not_available' }
+            end
+
+            conn = Legion::Data.connection
+            allowed = allowed_domains_for(target_domain)
+
+            dataset = conn[:apollo_entries]
+                      .where(status: 'confirmed')
+                      .where { confidence >= min_confidence }
+                      .limit(limit)
+
+            dataset = dataset.where(knowledge_domain: allowed) unless allowed == :all
+
+            entries = dataset.all
+
+            formatted = entries.map do |entry|
+              { id: entry[:id], content: entry[:content], content_type: entry[:content_type],
+                confidence: entry[:confidence], knowledge_domain: entry[:knowledge_domain],
+                tags: entry[:tags], source_agent: entry[:source_agent] }
+            end
+
+            { success: true, entries: formatted, count: formatted.size, target_domain: target_domain }
+          rescue Sequel::Error => e
+            { success: false, error: e.message }
+          end
+
+          def handle_erasure_request(agent_id:, **)
+            unless defined?(Legion::Data) && Legion::Data.respond_to?(:connection) && Legion::Data.connection
+              return { deleted: 0, redacted: 0, error: 'apollo_data_not_available' }
+            end
+
+            conn = Legion::Data.connection
+
+            # Delete entries solely from dead agent (not confirmed by others)
+            deleted = conn[:apollo_entries]
+                      .where(source_agent: agent_id)
+                      .exclude(status: 'confirmed')
+                      .delete
+
+            # Redact attribution on confirmed entries (corroborated, retain knowledge)
+            redacted = conn[:apollo_entries]
+                       .where(source_agent: agent_id, status: 'confirmed')
+                       .update(source_agent: 'redacted', source_provider: nil, source_channel: nil)
+
+            { deleted: deleted, redacted: redacted, agent_id: agent_id }
+          rescue Sequel::Error => e
+            { deleted: 0, redacted: 0, error: e.message }
+          end
+
           private
+
+          def allowed_domains_for(target_domain)
+            rules = if defined?(Legion::Settings) && Legion::Settings.dig(:apollo, :domain_isolation)
+                      Legion::Settings.dig(:apollo, :domain_isolation)
+                    else
+                      DOMAIN_ISOLATION
+                    end
+
+            allowed = rules[target_domain]
+            return :all if allowed == :all || allowed.nil?
+
+            Array(allowed)
+          end
 
           def detect_contradictions(entry_id, embedding, content)
             return [] unless embedding && defined?(Legion::Data::Model::ApolloEntry)
@@ -242,7 +317,7 @@ module Legion
             false
           end
 
-          def find_corroboration(embedding, content_type_sym, source_agent)
+          def find_corroboration(embedding, content_type_sym, source_agent, source_channel = nil)
             existing = Legion::Data::Model::ApolloEntry
                        .where(content_type: content_type_sym)
                        .exclude(embedding: nil)
@@ -255,6 +330,14 @@ module Legion
               next unless Helpers::Similarity.above_corroboration_threshold?(similarity: sim)
 
               weight = same_source_provider?(source_agent, entry) ? 0.5 : 1.0
+
+              # Reject corroboration entirely if same channel (same data source)
+              if source_channel && entry.respond_to?(:source_channel)
+                existing_channel = entry.source_channel
+                weight = 0.0 if existing_channel && existing_channel == source_channel
+              end
+              next if weight.zero?
+
               entry.update(
                 confidence: Helpers::Confidence.apply_corroboration_boost(confidence: entry.confidence, weight: weight),
                 updated_at: Time.now

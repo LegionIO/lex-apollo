@@ -157,6 +157,37 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         )
         host.handle_ingest(content: 'test', content_type: 'fact', source_agent: 'agent-1')
       end
+
+      it 'passes source_channel to create' do
+        expect(mock_entry_class).to receive(:create).with(
+          hash_including(source_channel: 'slack-alerts')
+        ).and_return(mock_entry)
+        host.handle_ingest(content: 'test', content_type: 'fact',
+                           source_agent: 'agent-1', source_channel: 'slack-alerts')
+      end
+
+      it 'passes knowledge_domain to create from explicit param' do
+        expect(mock_entry_class).to receive(:create).with(
+          hash_including(knowledge_domain: 'clinical')
+        ).and_return(mock_entry)
+        host.handle_ingest(content: 'test', content_type: 'fact',
+                           source_agent: 'agent-1', knowledge_domain: 'clinical')
+      end
+
+      it 'defaults knowledge_domain to first tag' do
+        expect(mock_entry_class).to receive(:create).with(
+          hash_including(knowledge_domain: 'cardiology')
+        ).and_return(mock_entry)
+        host.handle_ingest(content: 'test', content_type: 'fact',
+                           tags: %w[cardiology treatment], source_agent: 'agent-1')
+      end
+
+      it 'defaults knowledge_domain to general when no tags and no explicit domain' do
+        expect(mock_entry_class).to receive(:create).with(
+          hash_including(knowledge_domain: 'general')
+        ).and_return(mock_entry)
+        host.handle_ingest(content: 'test', content_type: 'fact', source_agent: 'agent-1')
+      end
     end
 
     context 'when Sequel raises an error' do
@@ -305,6 +336,13 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         expect(result[:success]).to be true
         expect(result[:count]).to eq(1)
       end
+
+      it 'passes domain to graph query builder' do
+        expect(Legion::Extensions::Apollo::Helpers::GraphQuery).to receive(:build_semantic_search_sql).with(
+          hash_including(domain: 'clinical')
+        ).and_call_original
+        host.retrieve_relevant(query: 'treatment', domain: 'clinical')
+      end
     end
   end
 
@@ -388,6 +426,137 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         result = host.redistribute_knowledge(agent_id: 'agent-x')
         expect(result[:success]).to be false
         expect(result[:error]).to eq('db error')
+      end
+    end
+  end
+
+  describe '#prepare_mesh_export' do
+    let(:host) { Object.new.extend(described_class) }
+
+    context 'when Legion::Data is not available' do
+      before { hide_const('Legion::Data') if defined?(Legion::Data) }
+
+      it 'returns a structured error' do
+        result = host.prepare_mesh_export(target_domain: 'clinical_care')
+        expect(result[:success]).to be false
+        expect(result[:error]).to eq('apollo_data_not_available')
+      end
+    end
+
+    context 'when data is available' do
+      let(:mock_conn) { double('connection') }
+      let(:mock_dataset) { double('dataset') }
+      let(:clinical_entry) do
+        { id: 'e1', content: 'treatment', content_type: 'fact',
+          confidence: 0.8, knowledge_domain: 'clinical_care',
+          tags: ['clinical'], source_agent: 'agent-1' }
+      end
+      let(:claims_entry) do
+        { id: 'e2', content: 'denial', content_type: 'fact',
+          confidence: 0.7, knowledge_domain: 'claims_optimization',
+          tags: ['claims'], source_agent: 'agent-2' }
+      end
+
+      before do
+        data_mod = Module.new do
+          def self.connection; end
+
+          def self.respond_to?(method, *args)
+            method == :connection || super
+          end
+        end
+        stub_const('Legion::Data', data_mod)
+        allow(Legion::Data).to receive(:connection).and_return(mock_conn)
+        allow(mock_conn).to receive(:[]).with(:apollo_entries).and_return(mock_dataset)
+        allow(mock_dataset).to receive(:where).and_return(mock_dataset)
+        allow(mock_dataset).to receive(:limit).and_return(mock_dataset)
+      end
+
+      it 'filters entries by domain compatibility for clinical_care' do
+        allow(mock_dataset).to receive(:all).and_return([clinical_entry])
+        result = host.prepare_mesh_export(target_domain: 'clinical_care')
+        expect(result[:success]).to be true
+        expect(result[:target_domain]).to eq('clinical_care')
+      end
+
+      it 'allows all domains when target is general' do
+        allow(mock_dataset).to receive(:all).and_return([clinical_entry, claims_entry])
+        result = host.prepare_mesh_export(target_domain: 'general')
+        expect(result[:success]).to be true
+        expect(result[:count]).to eq(2)
+      end
+
+      it 'restricts claims_optimization to only claims entries' do
+        allow(mock_dataset).to receive(:all).and_return([claims_entry])
+        result = host.prepare_mesh_export(target_domain: 'claims_optimization')
+        expect(result[:success]).to be true
+      end
+    end
+  end
+
+  describe '#handle_erasure_request' do
+    let(:host) { Object.new.extend(described_class) }
+
+    context 'when Legion::Data is not available' do
+      before { hide_const('Legion::Data') if defined?(Legion::Data) }
+
+      it 'returns zero counts with error' do
+        result = host.handle_erasure_request(agent_id: 'agent-dead')
+        expect(result[:deleted]).to eq(0)
+        expect(result[:redacted]).to eq(0)
+        expect(result[:error]).to eq('apollo_data_not_available')
+      end
+    end
+
+    context 'when data is available' do
+      let(:mock_conn) { double('connection') }
+      let(:mock_dataset) { double('dataset') }
+
+      before do
+        data_mod = Module.new do
+          def self.connection; end
+
+          def self.respond_to?(method, *args)
+            method == :connection || super
+          end
+        end
+        stub_const('Legion::Data', data_mod)
+        allow(Legion::Data).to receive(:connection).and_return(mock_conn)
+        allow(mock_conn).to receive(:[]).with(:apollo_entries).and_return(mock_dataset)
+        allow(mock_dataset).to receive(:where).and_return(mock_dataset)
+        allow(mock_dataset).to receive(:exclude).and_return(mock_dataset)
+        allow(mock_dataset).to receive(:delete).and_return(3)
+        allow(mock_dataset).to receive(:update).and_return(2)
+      end
+
+      it 'deletes non-confirmed entries and redacts confirmed ones' do
+        result = host.handle_erasure_request(agent_id: 'agent-dead')
+        expect(result[:deleted]).to eq(3)
+        expect(result[:redacted]).to eq(2)
+        expect(result[:agent_id]).to eq('agent-dead')
+      end
+    end
+
+    context 'when Sequel raises an error' do
+      before do
+        data_mod = Module.new do
+          def self.connection; end
+
+          def self.respond_to?(method, *args)
+            method == :connection || super
+          end
+        end
+        stub_const('Legion::Data', data_mod)
+        allow(Legion::Data).to receive(:connection).and_return(double('conn').tap do |c|
+          allow(c).to receive(:[]).and_raise(Sequel::Error, 'db gone')
+        end)
+      end
+
+      it 'returns zero counts with the error message' do
+        result = host.handle_erasure_request(agent_id: 'agent-dead')
+        expect(result[:deleted]).to eq(0)
+        expect(result[:redacted]).to eq(0)
+        expect(result[:error]).to eq('db gone')
       end
     end
   end
