@@ -1,15 +1,13 @@
 # frozen_string_literal: true
 
 require 'bundler/setup'
-
-module Legion
-  module Logging
-    def self.debug(_msg); end
-    def self.info(_msg); end
-    def self.warn(_msg); end
-    def self.error(_msg); end
-  end
-end
+require 'legion/logging'
+require 'legion/settings'
+require 'legion/cache/helper'
+require 'legion/crypt/helper'
+require 'legion/data/helper'
+require 'legion/json/helper'
+require 'legion/transport'
 
 # Sequel is a runtime dependency via legion-data; stub for specs
 unless defined?(Sequel)
@@ -24,6 +22,32 @@ unless defined?(Sequel)
     end
     def self.expr(sym) = Expr.new(sym)
     def self.[](sym) = Expr.new(sym)
+  end
+end
+
+module Legion
+  module Extensions
+    module Helpers
+      module Lex
+        include Legion::Logging::Helper
+        include Legion::Settings::Helper
+        include Legion::Cache::Helper
+        include Legion::Crypt::Helper
+        include Legion::Data::Helper
+        include Legion::JSON::Helper
+        include Legion::Transport::Helper
+      end
+    end
+
+    module Actors
+      class Every
+        include Helpers::Lex
+      end
+
+      class Subscription
+        include Helpers::Lex
+      end
+    end
   end
 end
 

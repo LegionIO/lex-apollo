@@ -52,10 +52,10 @@ module Legion
               end
             end
 
-            log_debug("EntityWatchdog: ingested #{ingested} new entities from #{texts.size} log entries")
+            log.debug("EntityWatchdog: ingested #{ingested} new entities from #{texts.size} log entries")
             { success: true, ingested: ingested, logs_scanned: texts.size }
           rescue StandardError => e
-            log_error("EntityWatchdog scan_and_ingest failed: #{e.message}")
+            log.error("EntityWatchdog scan_and_ingest failed: #{e.message}")
             { success: false, error: e.message }
           end
 
@@ -100,7 +100,7 @@ module Legion
               context:      { entity_type: entity[:type], original_name: entity[:name] }
             ).publish
           rescue StandardError => e
-            log_error("EntityWatchdog publish failed: #{e.message}")
+            log.error("EntityWatchdog publish failed: #{e.message}")
           end
 
           def entity_types
@@ -125,16 +125,6 @@ module Legion
               return val.to_f if val
             end
             DEDUP_THRESHOLD_DEFAULT
-          end
-
-          private
-
-          def log_debug(message)
-            Legion::Logging.debug(message) if defined?(Legion::Logging)
-          end
-
-          def log_error(message)
-            Legion::Logging.error(message) if defined?(Legion::Logging)
           end
         end
       end

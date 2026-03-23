@@ -167,7 +167,7 @@ module Legion
               redistributed += 1
             end
 
-            Legion::Logging.info "[apollo] redistributed #{redistributed} entries from departing agent=#{agent_id}"
+            log.info "[apollo] redistributed #{redistributed} entries from departing agent=#{agent_id}"
             { success: true, redistributed: redistributed, agent_id: agent_id }
           rescue Sequel::Error => e
             { success: false, error: e.message }
