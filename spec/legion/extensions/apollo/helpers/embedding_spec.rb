@@ -48,7 +48,7 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Embedding do
       end
     end
 
-    context 'when Legion::LLM returns invalid embedding' do
+    context 'when Legion::LLM returns a short embedding' do
       before do
         llm = Module.new do
           define_method(:started?) { true }
@@ -59,9 +59,28 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Embedding do
         allow(Legion::LLM).to receive(:embed).and_return([0.1, 0.2])
       end
 
+      it 'accepts the embedding and updates dimension' do
+        result = described_class.generate(text: 'hello world')
+        expect(result).to eq([0.1, 0.2])
+        expect(described_class.dimension).to eq(2)
+      end
+    end
+
+    context 'when Legion::LLM returns nil' do
+      before do
+        llm = Module.new do
+          define_method(:started?) { true }
+          define_method(:embed) { |_text:| nil }
+          extend self
+        end
+        stub_const('Legion::LLM', llm)
+        allow(Legion::LLM).to receive(:embed).and_return(nil)
+      end
+
       it 'returns a zero vector as fallback' do
         result = described_class.generate(text: 'hello world')
-        expect(result).to eq(Array.new(1536, 0.0))
+        expect(result).to be_an(Array)
+        expect(result.all?(&:zero?)).to be true
       end
     end
   end

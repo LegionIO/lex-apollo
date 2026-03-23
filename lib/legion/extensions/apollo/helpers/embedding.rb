@@ -5,15 +5,28 @@ module Legion
     module Apollo
       module Helpers
         module Embedding
-          DIMENSION = 1536
+          DEFAULT_DIMENSION = 1536
 
           module_function
 
           def generate(text:, **)
-            return Array.new(DIMENSION, 0.0) unless defined?(Legion::LLM) && Legion::LLM.started?
+            return zero_vector unless defined?(Legion::LLM) && Legion::LLM.started?
 
             result = Legion::LLM.embed(text: text)
-            result.is_a?(Array) && result.size == DIMENSION ? result : Array.new(DIMENSION, 0.0)
+            if result.is_a?(Array) && result.any?
+              @dimension = result.size
+              result
+            else
+              zero_vector
+            end
+          end
+
+          def dimension
+            @dimension || DEFAULT_DIMENSION
+          end
+
+          def zero_vector
+            Array.new(dimension, 0.0)
           end
         end
       end

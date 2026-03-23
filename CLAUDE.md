@@ -5,7 +5,7 @@
 - **Grandparent**: `/Users/miverso2/rubymine/legion/CLAUDE.md`
 
 **Cognitive Concept**: Apollo (all human knowledge)
-**Version**: 0.3.1
+**Version**: 0.3.6
 
 ## What This Does
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.8] - 2026-03-23
+
+### Changed
+- `Helpers::Embedding.generate` now accepts any non-empty embedding vector and auto-detects dimension
+- Added `dimension` and `zero_vector` module methods for dynamic dimension support
+- Removed hardcoded 1536-dimension requirement (supports any embedding model dimension)
+
 ## [0.3.7] - 2026-03-22
 
 ### Changed
