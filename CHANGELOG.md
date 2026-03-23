@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.9] - 2026-03-23
+
+### Fixed
+- Guard `log.info` call in `redistribute_knowledge` with `Legion::Logging` check to prevent `NoMethodError` when `Helpers::Lex` is not loaded
+
 ## [0.3.8] - 2026-03-23
 
 ### Changed
