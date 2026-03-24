@@ -64,10 +64,9 @@ RSpec.describe Legion::Extensions::Apollo::GaiaIntegration do
       expect(result[:success]).to be true
     end
 
-    it 'entry point has entity watchdog registration block' do
+    it 'entry point documents entity watchdog actor' do
       entry_point = File.read(File.expand_path('../../../../lib/legion/extensions/apollo.rb', __dir__))
-      expect(entry_point).to include('entity_watchdog')
-      expect(entry_point).to include('PhaseWiring.register_handler(:post_tick_reflection)')
+      expect(entry_point).to include('Entity watchdog runs as Actor::EntityWatchdog')
     end
   end
 end

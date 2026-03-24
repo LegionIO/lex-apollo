@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.3] - 2026-03-24
+
+### Fixed
+- Embedding `generate()` now calls `Legion::LLM.embed(text)` with positional arg and extracts `:vector` from the returned Hash (was passing keyword arg to positional param and checking for Array instead of Hash — zero vectors on every call)
+- Added warning logging when embeddings fall back to zero vectors (was completely silent)
+- GasSubscriber now overrides `create_queue` to bind `apollo.gas` queue to `llm.audit` exchange with routing key `llm.audit.complete` (was bound to the wrong exchange with wrong routing key — GAS pipeline never received messages)
+- Renamed `Queues::Gas` to `Queues::GasSubscriber` and `Queues::Query` to `Queues::QueryResponder` to match Subscription actor constant lookup convention
+- Added `Transport::Exchanges::LlmAudit` exchange class for the `llm.audit` exchange
+- Decay actor `runner_function` changed from `'force_decay'` (a no-op message builder) to `'run_decay_cycle'` (the actual DB decay implementation — confidence decay was never running)
+- Removed dead `PhaseWiring.register_handler(:post_tick_reflection)` call from entry point (method does not exist in legion-gaia; entity watchdog runs independently as an Every actor)
+
+### Changed
+- Embedding dimension is now configurable via `Legion::Settings[:apollo][:embedding][:dimension]` (default: 1536)
+
 ## [0.4.2] - 2026-03-24
 
 ### Fixed

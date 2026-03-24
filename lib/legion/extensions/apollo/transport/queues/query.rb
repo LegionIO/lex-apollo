@@ -7,7 +7,7 @@ module Legion
     module Apollo
       module Transport
         module Queues
-          class Query < Legion::Transport::Queue
+          class QueryResponder < Legion::Transport::Queue
             def queue_name
               'apollo.query'
             end

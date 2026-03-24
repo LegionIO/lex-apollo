@@ -7,7 +7,7 @@ module Legion
     module Apollo
       module Transport
         module Queues
-          class Gas < Legion::Transport::Queue
+          class GasSubscriber < Legion::Transport::Queue
             def queue_name
               'apollo.gas'
             end

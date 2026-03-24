@@ -29,22 +29,22 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Embedding do
     end
 
     context 'when Legion::LLM is available and started' do
-      let(:mock_embedding) { Array.new(1536) { rand(-1.0..1.0) } }
+      let(:mock_vector) { Array.new(1536) { rand(-1.0..1.0) } }
 
       before do
         llm = Module.new do
           define_method(:started?) { true }
-          define_method(:embed) { |_text:| nil }
+          define_method(:embed) { |_text, **| nil }
           extend self
         end
         stub_const('Legion::LLM', llm)
-        allow(Legion::LLM).to receive(:embed).and_return(mock_embedding)
+        allow(Legion::LLM).to receive(:embed).and_return({ vector: mock_vector, model: 'text-embedding-3-small' })
       end
 
-      it 'returns the embedding from LLM' do
+      it 'returns the vector from the LLM response hash' do
         result = described_class.generate(text: 'hello world')
-        expect(result).to eq(mock_embedding)
-        expect(Legion::LLM).to have_received(:embed).with(text: 'hello world')
+        expect(result).to eq(mock_vector)
+        expect(Legion::LLM).to have_received(:embed).with('hello world')
       end
     end
 
@@ -52,11 +52,11 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Embedding do
       before do
         llm = Module.new do
           define_method(:started?) { true }
-          define_method(:embed) { |_text:| nil }
+          define_method(:embed) { |_text, **| nil }
           extend self
         end
         stub_const('Legion::LLM', llm)
-        allow(Legion::LLM).to receive(:embed).and_return([0.1, 0.2])
+        allow(Legion::LLM).to receive(:embed).and_return({ vector: [0.1, 0.2], model: 'test' })
       end
 
       it 'accepts the embedding and updates dimension' do
@@ -66,11 +66,29 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Embedding do
       end
     end
 
+    context 'when Legion::LLM returns nil vector' do
+      before do
+        llm = Module.new do
+          define_method(:started?) { true }
+          define_method(:embed) { |_text, **| nil }
+          extend self
+        end
+        stub_const('Legion::LLM', llm)
+        allow(Legion::LLM).to receive(:embed).and_return({ vector: nil, model: 'test', error: 'failed' })
+      end
+
+      it 'returns a zero vector as fallback' do
+        result = described_class.generate(text: 'hello world')
+        expect(result).to be_an(Array)
+        expect(result.all?(&:zero?)).to be true
+      end
+    end
+
     context 'when Legion::LLM returns nil' do
       before do
         llm = Module.new do
           define_method(:started?) { true }
-          define_method(:embed) { |_text:| nil }
+          define_method(:embed) { |_text, **| nil }
           extend self
         end
         stub_const('Legion::LLM', llm)
@@ -81,6 +99,28 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Embedding do
         result = described_class.generate(text: 'hello world')
         expect(result).to be_an(Array)
         expect(result.all?(&:zero?)).to be true
+      end
+    end
+  end
+
+  describe '.configured_dimension' do
+    context 'when Settings has apollo.embedding.dimension' do
+      before do
+        stub_const('Legion::Settings', { apollo: { embedding: { dimension: 768 } } })
+      end
+
+      it 'returns the configured dimension' do
+        expect(described_class.configured_dimension).to eq(768)
+      end
+    end
+
+    context 'when Settings has no apollo key' do
+      before do
+        stub_const('Legion::Settings', { apollo: nil })
+      end
+
+      it 'returns the default dimension' do
+        expect(described_class.configured_dimension).to eq(1536)
       end
     end
   end

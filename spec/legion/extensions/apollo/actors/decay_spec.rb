@@ -23,8 +23,8 @@ RSpec.describe Legion::Extensions::Apollo::Actor::Decay do
     expect(actor.runner_class).to eq(Legion::Extensions::Apollo::Runners::Maintenance)
   end
 
-  it 'runs force_decay function' do
-    expect(actor.runner_function).to eq('force_decay')
+  it 'runs run_decay_cycle function' do
+    expect(actor.runner_function).to eq('run_decay_cycle')
   end
 
   it 'runs every 3600 seconds' do

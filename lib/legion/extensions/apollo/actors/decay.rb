@@ -9,7 +9,7 @@ module Legion
       module Actor
         class Decay < Legion::Extensions::Actors::Every
           def runner_class    = Legion::Extensions::Apollo::Runners::Maintenance
-          def runner_function = 'force_decay'
+          def runner_function = 'run_decay_cycle'
           def time            = 3600
           def run_now?        = false
           def use_runner?     = false
