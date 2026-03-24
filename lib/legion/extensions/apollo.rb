@@ -14,6 +14,7 @@ if defined?(Legion::Transport)
   require 'legion/extensions/apollo/transport/exchanges/apollo'
   require 'legion/extensions/apollo/transport/queues/ingest'
   require 'legion/extensions/apollo/transport/queues/query'
+  require 'legion/extensions/apollo/transport/queues/gas'
   require 'legion/extensions/apollo/transport/messages/ingest'
   require 'legion/extensions/apollo/transport/messages/query'
 end
