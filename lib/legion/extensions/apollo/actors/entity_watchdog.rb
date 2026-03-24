@@ -18,7 +18,7 @@ module Legion
 
           def runner_class    = self.class
           def runner_function = 'scan_and_ingest'
-          def time            = 120
+          def time            = (defined?(Legion::Settings) && Legion::Settings.dig(:apollo, :actors, :entity_watchdog_interval)) || 120
           def run_now?        = false
           def use_runner?     = false
           def check_subtask?  = false
@@ -62,11 +62,13 @@ module Legion
           def recent_task_log_texts
             return [] unless defined?(Legion::Data) && defined?(Legion::Data::Model::TaskLog)
 
-            cutoff = Time.now - TASK_LOG_LOOKBACK_SECONDS
+            lookback = (defined?(Legion::Settings) && Legion::Settings.dig(:apollo, :entity_watchdog, :lookback_seconds)) || TASK_LOG_LOOKBACK_SECONDS
+            log_limit = (defined?(Legion::Settings) && Legion::Settings.dig(:apollo, :entity_watchdog, :log_limit)) || TASK_LOG_LIMIT
+            cutoff = Time.now - lookback
             logs = Legion::Data::Model::TaskLog
                    .where { created_at >= cutoff }
                    .order(Sequel.desc(:created_at))
-                   .limit(TASK_LOG_LIMIT)
+                   .limit(log_limit)
                    .select_map(:message)
             logs.map(&:to_s).reject(&:empty?).uniq
           rescue StandardError
@@ -77,7 +79,7 @@ module Legion
             result = retrieve_relevant(
               query:          entity[:name].to_s,
               limit:          1,
-              min_confidence: 0.1,
+              min_confidence: Helpers::Confidence.apollo_setting(:entity_watchdog, :exists_min_confidence, default: 0.1),
               tags:           [entity[:type].to_s]
             )
             return false unless result[:success] && result[:count].positive?

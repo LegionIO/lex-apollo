@@ -11,7 +11,15 @@ module Legion
 
           module_function
 
-          def build_traversal_sql(depth: DEFAULT_DEPTH, relation_types: nil, min_activation: MIN_ACTIVATION, **)
+          def spread_factor  = Confidence.apollo_setting(:graph, :spread_factor, default: SPREAD_FACTOR)
+          def default_depth  = Confidence.apollo_setting(:graph, :default_depth, default: DEFAULT_DEPTH)
+          def min_activation = Confidence.apollo_setting(:graph, :min_activation, default: MIN_ACTIVATION)
+
+          def default_query_limit          = Confidence.apollo_setting(:query, :default_limit, default: 10)
+          def default_query_min_confidence = Confidence.apollo_setting(:query, :default_min_confidence, default: 0.3)
+
+          def build_traversal_sql(depth: default_depth, relation_types: nil, min_activation: self.min_activation, **)
+            sf = spread_factor
             type_filter = if relation_types&.any?
                             types = relation_types.map { |t| "'#{t}'" }.join(', ')
                             "AND r.relation_type IN (#{types})"
@@ -30,12 +38,12 @@ module Legion
 
                 SELECT e.id, e.content, e.content_type, e.confidence, e.tags, e.source_agent,
                        g.depth + 1,
-                       (g.activation * #{SPREAD_FACTOR} * r.weight)::float
+                       (g.activation * #{sf} * r.weight)::float
                 FROM graph g
                 JOIN apollo_relations r ON r.from_entry_id = g.id #{type_filter}
                 JOIN apollo_entries e ON e.id = r.to_entry_id
                 WHERE g.depth < #{depth}
-                  AND g.activation * #{SPREAD_FACTOR} * r.weight > #{min_activation}
+                  AND g.activation * #{sf} * r.weight > #{min_activation}
               )
               SELECT DISTINCT ON (id) id, content, content_type, confidence, tags, source_agent,
                      depth, activation
@@ -44,7 +52,7 @@ module Legion
             SQL
           end
 
-          def build_semantic_search_sql(limit: 10, min_confidence: 0.3, statuses: nil, tags: nil, domain: nil, **)
+          def build_semantic_search_sql(limit: default_query_limit, min_confidence: default_query_min_confidence, statuses: nil, tags: nil, domain: nil, **)
             conditions = ["e.confidence >= #{min_confidence}"]
 
             if statuses&.any?

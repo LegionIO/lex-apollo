@@ -12,15 +12,13 @@ RSpec.describe 'Apollo Decay Cycle' do
     end
   end
 
-  describe '#decay_alpha' do
-    it 'returns POWER_LAW_ALPHA when settings unavailable' do
-      expect(maintenance.send(:decay_alpha)).to eq(0.5)
+  describe 'configurable decay parameters' do
+    it 'returns POWER_LAW_ALPHA as default' do
+      expect(Legion::Extensions::Apollo::Helpers::Confidence.power_law_alpha).to eq(0.5)
     end
-  end
 
-  describe '#decay_threshold' do
-    it 'returns default threshold when settings unavailable' do
-      expect(maintenance.send(:decay_threshold)).to eq(0.1)
+    it 'returns default decay threshold' do
+      expect(Legion::Extensions::Apollo::Helpers::Confidence.decay_threshold).to eq(0.1)
     end
   end
 end

@@ -10,7 +10,7 @@ module Legion
         class CorroborationChecker < Legion::Extensions::Actors::Every
           def runner_class    = Legion::Extensions::Apollo::Runners::Maintenance
           def runner_function = 'check_corroboration'
-          def time            = 900
+          def time            = (defined?(Legion::Settings) && Legion::Settings.dig(:apollo, :actors, :corroboration_interval)) || 900
           def run_now?        = false
           def use_runner?     = false
           def check_subtask?  = false

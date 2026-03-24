@@ -10,7 +10,7 @@ module Legion
         class Decay < Legion::Extensions::Actors::Every
           def runner_class    = Legion::Extensions::Apollo::Runners::Maintenance
           def runner_function = 'run_decay_cycle'
-          def time            = 3600
+          def time            = (defined?(Legion::Settings) && Legion::Settings.dig(:apollo, :actors, :decay_interval)) || 3600
           def run_now?        = false
           def use_runner?     = false
           def check_subtask?  = false

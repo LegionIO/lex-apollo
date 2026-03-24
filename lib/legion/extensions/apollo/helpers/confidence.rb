@@ -20,7 +20,28 @@ module Legion
 
           module_function
 
-          def apply_decay(confidence:, age_hours: nil, alpha: POWER_LAW_ALPHA, **)
+          def apollo_setting(*keys, default:)
+            return default unless defined?(Legion::Settings) && !Legion::Settings[:apollo].nil?
+
+            Legion::Settings[:apollo].dig(*keys) || default
+          rescue StandardError
+            default
+          end
+
+          def initial_confidence     = apollo_setting(:confidence, :initial, default: INITIAL_CONFIDENCE)
+          def corroboration_boost    = apollo_setting(:confidence, :corroboration_boost, default: CORROBORATION_BOOST)
+          def retrieval_boost        = apollo_setting(:confidence, :retrieval_boost, default: RETRIEVAL_BOOST)
+          def power_law_alpha        = apollo_setting(:power_law_alpha, default: POWER_LAW_ALPHA)
+          def decay_threshold        = apollo_setting(:decay_threshold, default: DECAY_THRESHOLD)
+          def write_confidence_gate  = apollo_setting(:confidence, :write_gate, default: WRITE_CONFIDENCE_GATE)
+          def write_novelty_gate     = apollo_setting(:confidence, :novelty_gate, default: WRITE_NOVELTY_GATE)
+          def stale_days             = apollo_setting(:stale_days, default: STALE_DAYS)
+
+          def corroboration_similarity_threshold
+            apollo_setting(:confidence, :corroboration_similarity, default: CORROBORATION_SIMILARITY_THRESHOLD)
+          end
+
+          def apply_decay(confidence:, age_hours: nil, alpha: power_law_alpha, **)
             if age_hours
               [confidence * ((age_hours.clamp(0, Float::INFINITY) + 2.0)**(-alpha)) / ((age_hours.clamp(0, Float::INFINITY) + 1.0)**(-alpha)), 0.0].max
             else
@@ -30,19 +51,19 @@ module Legion
           end
 
           def apply_retrieval_boost(confidence:, **)
-            [confidence + RETRIEVAL_BOOST, 1.0].min
+            [confidence + retrieval_boost, 1.0].min
           end
 
           def apply_corroboration_boost(confidence:, weight: 1.0, **)
-            [confidence + (CORROBORATION_BOOST * weight), 1.0].min
+            [confidence + (corroboration_boost * weight), 1.0].min
           end
 
           def decayed?(confidence:, **)
-            confidence < DECAY_THRESHOLD
+            confidence < decay_threshold
           end
 
           def meets_write_gate?(confidence:, novelty:, **)
-            confidence > WRITE_CONFIDENCE_GATE && novelty > WRITE_NOVELTY_GATE
+            confidence > write_confidence_gate && novelty > write_novelty_gate
           end
         end
       end

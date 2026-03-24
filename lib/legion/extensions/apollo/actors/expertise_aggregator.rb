@@ -10,7 +10,7 @@ module Legion
         class ExpertiseAggregator < Legion::Extensions::Actors::Every
           def runner_class    = Legion::Extensions::Apollo::Runners::Expertise
           def runner_function = 'aggregate'
-          def time            = 1800
+          def time            = (defined?(Legion::Settings) && Legion::Settings.dig(:apollo, :actors, :expertise_interval)) || 1800
           def run_now?        = false
           def use_runner?     = false
           def check_subtask?  = false

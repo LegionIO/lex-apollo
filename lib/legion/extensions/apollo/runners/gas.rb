@@ -5,7 +5,22 @@ module Legion
     module Apollo
       module Runners
         module Gas
+          RELATION_TYPES = %w[
+            similar_to contradicts depends_on causes
+            part_of supersedes supports_by extends
+          ].freeze
+
+          RELATE_CONFIDENCE_GATE = 0.7
+          SYNTHESIS_CONFIDENCE_CAP = 0.7
+          MAX_ANTICIPATIONS = 3
+
           module_function
+
+          def relate_confidence_gate = Helpers::Confidence.apollo_setting(:gas, :relate_confidence_gate, default: RELATE_CONFIDENCE_GATE)
+          def synthesis_confidence_cap = Helpers::Confidence.apollo_setting(:gas, :synthesis_confidence_cap, default: SYNTHESIS_CONFIDENCE_CAP)
+          def max_anticipations       = Helpers::Confidence.apollo_setting(:gas, :max_anticipations, default: MAX_ANTICIPATIONS)
+          def similar_entries_limit   = Helpers::Confidence.apollo_setting(:gas, :similar_entries_limit, default: 3)
+          def fallback_confidence     = Helpers::Confidence.apollo_setting(:gas, :fallback_confidence, default: 0.5)
 
           def process(audit_event)
             return { phases_completed: 0, reason: 'no content' } unless processable?(audit_event)
@@ -57,13 +72,6 @@ module Legion
             []
           end
 
-          RELATION_TYPES = %w[
-            similar_to contradicts depends_on causes
-            part_of supersedes supports_by extends
-          ].freeze
-
-          RELATE_CONFIDENCE_GATE = 0.7
-
           # Phase 3: Relate - classify relationships between new and existing entries
           def phase_relate(facts, _entities)
             return [] unless defined?(Runners::Knowledge)
@@ -80,8 +88,6 @@ module Legion
             end
             relations
           end
-
-          SYNTHESIS_CONFIDENCE_CAP = 0.7
 
           # Phase 4: Synthesize - generate derivative knowledge
           def phase_synthesize(facts, _relations)
@@ -115,8 +121,6 @@ module Legion
             { deposited: deposited }
           end
 
-          MAX_ANTICIPATIONS = 3
-
           # Phase 6: Anticipate - pre-cache likely follow-up questions
           def phase_anticipate(facts, _synthesis)
             return [] if facts.empty?
@@ -128,9 +132,11 @@ module Legion
           end
 
           def fetch_similar_entries(facts)
+            lim = similar_entries_limit
+            min_conf = Helpers::GraphQuery.default_query_min_confidence
             entries = []
             facts.each do |fact|
-              result = Runners::Knowledge.retrieve_relevant(query: fact[:content], limit: 3, min_confidence: 0.3)
+              result = Runners::Knowledge.retrieve_relevant(query: fact[:content], limit: lim, min_confidence: min_conf)
               entries.concat(result[:entries]) if result[:success] && result[:entries]&.any?
             rescue StandardError
               next
@@ -139,13 +145,14 @@ module Legion
           end
 
           def classify_relation(fact, entry)
+            fb_conf = fallback_confidence
             if llm_available?
               llm_classify_relation(fact, entry)
             else
-              { from_content: fact[:content], to_id: entry[:id], relation_type: 'similar_to', confidence: 0.5 }
+              { from_content: fact[:content], to_id: entry[:id], relation_type: 'similar_to', confidence: fb_conf }
             end
           rescue StandardError
-            { from_content: fact[:content], to_id: entry[:id], relation_type: 'similar_to', confidence: 0.5 }
+            { from_content: fact[:content], to_id: entry[:id], relation_type: 'similar_to', confidence: fb_conf }
           end
 
           def llm_classify_relation(fact, entry)
@@ -190,7 +197,7 @@ module Legion
 
             conf = best[:confidence] || best['confidence'] || 0
             rtype = best[:relation_type] || best['relation_type']
-            return fallback_relation(fact, entry) if conf < RELATE_CONFIDENCE_GATE || !RELATION_TYPES.include?(rtype)
+            return fallback_relation(fact, entry) if conf < relate_confidence_gate || !RELATION_TYPES.include?(rtype)
 
             { from_content: fact[:content], to_id: entry[:id], relation_type: rtype, confidence: conf }
           rescue StandardError
@@ -198,7 +205,7 @@ module Legion
           end
 
           def fallback_relation(fact, entry)
-            { from_content: fact[:content], to_id: entry[:id], relation_type: 'similar_to', confidence: 0.5 }
+            { from_content: fact[:content], to_id: entry[:id], relation_type: 'similar_to', confidence: fallback_confidence }
           end
 
           def llm_synthesize(facts)
@@ -249,13 +256,14 @@ module Legion
           def build_synthesis_entry(item, facts)
             source_indices = item[:source_indices] || item['source_indices'] || []
             source_confs = source_indices.filter_map { |i| facts[i]&.dig(:confidence) }
-            geo_mean = source_confs.empty? ? 0.5 : geometric_mean(source_confs)
+            fb = fallback_confidence
+            geo_mean = source_confs.empty? ? fb : geometric_mean(source_confs)
 
             {
               content:        item[:content] || item['content'],
               content_type:   (item[:content_type] || item['content_type'] || 'inference').to_sym,
               status:         :candidate,
-              confidence:     [geo_mean, SYNTHESIS_CONFIDENCE_CAP].min,
+              confidence:     [geo_mean, synthesis_confidence_cap].min,
               source_indices: source_indices
             }
           end
@@ -294,7 +302,7 @@ module Legion
             content = result.respond_to?(:message) ? result.message[:content] : result.to_s
             parsed = Legion::JSON.load(content)
             questions = parsed.is_a?(Hash) ? (parsed[:questions] || parsed['questions'] || []) : []
-            questions = questions.first(MAX_ANTICIPATIONS)
+            questions = questions.first(max_anticipations)
 
             questions.map do |q|
               promote_to_pattern_store(question: q, facts: facts)
@@ -310,7 +318,7 @@ module Legion
             Legion::Extensions::Agentic::TBI::PatternStore.promote_candidate(
               intent:     question,
               resolution: { source: 'gas_anticipate', facts: facts.map { |f| f[:content] } },
-              confidence: 0.5
+              confidence: fallback_confidence
             )
           rescue StandardError
             nil

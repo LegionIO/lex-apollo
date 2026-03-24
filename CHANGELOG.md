@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.4] - 2026-03-24
+
+### Changed
+- All ~35 hardcoded numeric thresholds, limits, intervals, and confidence values are now configurable via `Legion::Settings[:apollo]`
+- `Helpers::Confidence` gains `apollo_setting(*keys, default:)` lookup helper and accessor methods for every constant (initial_confidence, corroboration_boost, retrieval_boost, power_law_alpha, decay_threshold, write gates, stale_days)
+- `Helpers::GraphQuery` gains `spread_factor`, `default_depth`, `min_activation`, `default_query_limit`, `default_query_min_confidence` settings-aware accessors
+- `Runners::Gas` gains `relate_confidence_gate`, `synthesis_confidence_cap`, `max_anticipations`, `similar_entries_limit`, `fallback_confidence` settings-aware accessors
+- `Runners::Knowledge` method defaults (query limits, min_confidence, contradiction/corroboration params) now read from Settings
+- `Runners::Maintenance` removed duplicate private helpers, delegates to `Helpers::Confidence` methods
+- `Runners::Expertise` proficiency cap and min_agents_at_risk configurable
+- Actor intervals (Decay, ExpertiseAggregator, CorroborationChecker, EntityWatchdog) configurable via `apollo.actors.*_interval`
+- EntityWatchdog lookback_seconds, log_limit, exists_min_confidence configurable
+- EntityExtractor min_confidence configurable via `apollo.entity_extractor.min_confidence`
+- Helpers::EntityWatchdog detect_confidence configurable
+
 ## [0.4.3] - 2026-03-24
 
 ### Fixed

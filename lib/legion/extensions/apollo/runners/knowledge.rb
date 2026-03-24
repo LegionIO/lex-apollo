@@ -31,7 +31,7 @@ module Legion
             }
           end
 
-          def query_knowledge(query:, limit: 10, min_confidence: 0.3, status: [:confirmed], tags: nil, **)
+          def query_knowledge(query:, limit: Helpers::GraphQuery.default_query_limit, min_confidence: Helpers::GraphQuery.default_query_min_confidence, status: [:confirmed], tags: nil, **) # rubocop:disable Layout/LineLength
             {
               action:         :query,
               query:          query,
@@ -42,7 +42,7 @@ module Legion
             }
           end
 
-          def related_entries(entry_id:, relation_types: nil, depth: 2, **)
+          def related_entries(entry_id:, relation_types: nil, depth: Helpers::GraphQuery.default_depth, **)
             {
               action:         :traverse,
               entry_id:       entry_id,
@@ -73,7 +73,7 @@ module Legion
               new_entry = Legion::Data::Model::ApolloEntry.create(
                 content:          content,
                 content_type:     content_type_sym,
-                confidence:       Helpers::Confidence::INITIAL_CONFIDENCE,
+                confidence:       Helpers::Confidence.initial_confidence,
                 source_agent:     source_agent,
                 source_provider:  source_provider || derive_provider_from_agent(source_agent),
                 source_channel:   source_channel,
@@ -100,7 +100,7 @@ module Legion
             { success: false, error: e.message }
           end
 
-          def handle_query(query:, limit: 10, min_confidence: 0.3, status: [:confirmed], tags: nil, domain: nil, agent_id: 'unknown', **) # rubocop:disable Metrics/ParameterLists
+          def handle_query(query:, limit: Helpers::GraphQuery.default_query_limit, min_confidence: Helpers::GraphQuery.default_query_min_confidence, status: [:confirmed], tags: nil, domain: nil, agent_id: 'unknown', **) # rubocop:disable Metrics/ParameterLists, Layout/LineLength
             return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
 
             embedding = Helpers::Embedding.generate(text: query)
@@ -140,7 +140,7 @@ module Legion
             { success: false, error: e.message }
           end
 
-          def redistribute_knowledge(agent_id:, min_confidence: 0.5, **)
+          def redistribute_knowledge(agent_id:, min_confidence: Helpers::Confidence.apollo_setting(:query, :redistribute_min_confidence, default: 0.5), **)
             return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
 
             entries = Legion::Data::Model::ApolloEntry
@@ -173,7 +173,7 @@ module Legion
             { success: false, error: e.message }
           end
 
-          def retrieve_relevant(query: nil, limit: 5, min_confidence: 0.3, tags: nil, domain: nil, skip: false, **) # rubocop:disable Metrics/ParameterLists
+          def retrieve_relevant(query: nil, limit: Helpers::Confidence.apollo_setting(:query, :retrieval_limit, default: 5), min_confidence: Helpers::GraphQuery.default_query_min_confidence, tags: nil, domain: nil, skip: false, **) # rubocop:disable Metrics/ParameterLists, Layout/LineLength
             return { status: :skipped } if skip
 
             return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
@@ -208,7 +208,7 @@ module Legion
             { success: false, error: e.message }
           end
 
-          def prepare_mesh_export(target_domain:, min_confidence: 0.5, limit: 100, **)
+          def prepare_mesh_export(target_domain:, min_confidence: Helpers::Confidence.apollo_setting(:query, :mesh_export_min_confidence, default: 0.5), limit: Helpers::Confidence.apollo_setting(:query, :mesh_export_limit, default: 100), **) # rubocop:disable Layout/LineLength
             unless defined?(Legion::Data) && Legion::Data.respond_to?(:connection) && Legion::Data.connection
               return { success: false, error: 'apollo_data_not_available' }
             end
@@ -277,21 +277,25 @@ module Legion
           def detect_contradictions(entry_id, embedding, content)
             return [] unless embedding && defined?(Legion::Data::Model::ApolloEntry)
 
+            sim_limit = Helpers::Confidence.apollo_setting(:contradiction, :similar_limit, default: 10)
+            sim_threshold = Helpers::Confidence.apollo_setting(:contradiction, :similarity_threshold, default: 0.7)
+            rel_weight = Helpers::Confidence.apollo_setting(:contradiction, :relation_weight, default: 0.8)
+
             similar = Legion::Data::Model::ApolloEntry
                       .exclude(id: entry_id)
                       .exclude(embedding: nil)
-                      .limit(10).all
+                      .limit(sim_limit).all
 
             contradictions = []
             similar.each do |existing|
               sim = Helpers::Similarity.cosine_similarity(vec_a: embedding, vec_b: existing.embedding)
-              next unless sim > 0.7
+              next unless sim > sim_threshold
               next unless llm_detects_conflict?(content, existing.content)
 
               Legion::Data::Model::ApolloRelation.create(
                 from_entry_id: entry_id, to_entry_id: existing.id,
                 relation_type: 'contradicts', source_agent: 'system:contradiction',
-                weight: 0.8
+                weight: rel_weight
               )
 
               Legion::Data::Model::ApolloEntry.where(id: [entry_id, existing.id]).update(status: 'disputed')
@@ -319,10 +323,11 @@ module Legion
           end
 
           def find_corroboration(embedding, content_type_sym, source_agent, source_channel = nil)
+            scan_limit = Helpers::Confidence.apollo_setting(:corroboration, :scan_limit, default: 50)
             existing = Legion::Data::Model::ApolloEntry
                        .where(content_type: content_type_sym)
                        .exclude(embedding: nil)
-                       .limit(50)
+                       .limit(scan_limit)
 
             existing.each do |entry|
               next unless entry.embedding
@@ -330,7 +335,8 @@ module Legion
               sim = Helpers::Similarity.cosine_similarity(vec_a: embedding, vec_b: entry.embedding)
               next unless Helpers::Similarity.above_corroboration_threshold?(similarity: sim)
 
-              weight = same_source_provider?(source_agent, entry) ? 0.5 : 1.0
+              same_provider_wt = Helpers::Confidence.apollo_setting(:corroboration, :same_provider_weight, default: 0.5)
+              weight = same_source_provider?(source_agent, entry) ? same_provider_wt : 1.0
 
               # Reject corroboration entirely if same channel (same data source)
               if source_channel && entry.respond_to?(:source_channel)
@@ -377,7 +383,8 @@ module Legion
               expertise.update(entry_count: expertise.entry_count + 1, last_active_at: Time.now)
             else
               Legion::Data::Model::ApolloExpertise.create(
-                agent_id: source_agent, domain: domain, proficiency: 0.0,
+                agent_id: source_agent, domain: domain,
+                proficiency: Helpers::Confidence.apollo_setting(:expertise, :initial_proficiency, default: 0.0),
                 entry_count: 1, last_active_at: Time.now
               )
             end

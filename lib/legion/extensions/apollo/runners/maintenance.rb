@@ -9,11 +9,11 @@ module Legion
     module Apollo
       module Runners
         module Maintenance
-          def force_decay(factor: 0.5, **)
+          def force_decay(factor: Helpers::Confidence.apollo_setting(:maintenance, :force_decay_factor, default: 0.5), **)
             { action: :force_decay, factor: factor }
           end
 
-          def archive_stale(days: 90, **)
+          def archive_stale(days: Helpers::Confidence.stale_days, **)
             { action: :archive_stale, days: days }
           end
 
@@ -22,17 +22,13 @@ module Legion
           end
 
           def run_decay_cycle(alpha: nil, min_confidence: nil, **)
-            alpha ||= decay_alpha
-            min_confidence ||= decay_threshold
+            alpha ||= Helpers::Confidence.power_law_alpha
+            min_confidence ||= Helpers::Confidence.decay_threshold
 
             return { decayed: 0, archived: 0 } unless defined?(Legion::Data) && Legion::Data.respond_to?(:connection) && Legion::Data.connection
 
             conn = Legion::Data.connection
 
-            # Power-law: per-cycle decay factor decreases as entries age
-            # Factor = (hours_old / (hours_old + 1)) ^ alpha
-            # Recent entries (small hours_old) get a factor closer to 0 (more decay)
-            # Old entries (large hours_old) get a factor closer to 1 (less decay)
             hours_expr = Sequel.lit(
               'GREATEST(EXTRACT(EPOCH FROM (NOW() - COALESCE(updated_at, created_at))) / 3600.0, 1.0)'
             )
@@ -79,7 +75,6 @@ module Legion
               both_known = known_provider?(candidate_provider) && known_provider?(match_provider)
               next if both_known && candidate_provider == match_provider
 
-              # Also reject if same source_channel (same data pipeline)
               candidate_channel = candidate.respond_to?(:source_channel) ? candidate.source_channel : nil
               match_channel = match.respond_to?(:source_channel) ? match.source_channel : nil
               next if candidate_channel && match_channel && candidate_channel == match_channel
@@ -96,7 +91,7 @@ module Legion
                 to_entry_id:   match.id,
                 relation_type: 'similar_to',
                 source_agent:  'system:corroboration',
-                weight:        1.0
+                weight:        Helpers::Confidence.apollo_setting(:corroboration, :relation_weight, default: 1.0)
               )
 
               promoted += 1
@@ -109,17 +104,8 @@ module Legion
 
           private
 
-          def decay_alpha
-            (defined?(Legion::Settings) && Legion::Settings.dig(:apollo, :power_law_alpha)) ||
-              Helpers::Confidence::POWER_LAW_ALPHA
-          end
-
           def known_provider?(provider)
             !provider.nil? && !provider.to_s.empty? && provider.to_s != 'unknown'
-          end
-
-          def decay_threshold
-            (defined?(Legion::Settings) && Legion::Settings.dig(:apollo, :decay_threshold)) || 0.1
           end
 
           include Legion::Extensions::Helpers::Lex if defined?(Legion::Extensions::Helpers::Lex)

@@ -23,7 +23,7 @@ module Legion
                 next unless pattern
 
                 text.scan(pattern).each do |match|
-                  entities << { type: type_sym, value: match.strip, confidence: 0.5 }
+                  entities << { type: type_sym, value: match.strip, confidence: Confidence.apollo_setting(:entity_watchdog, :detect_confidence, default: 0.5) }
                 end
               end
 
