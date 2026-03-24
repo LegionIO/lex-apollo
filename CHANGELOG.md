@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.1] - 2026-03-23
+
+### Changed
+- route llm calls through pipeline when available, add caller identity for attribution
+
 ## [0.4.0] - 2026-03-23
 
 ### Added

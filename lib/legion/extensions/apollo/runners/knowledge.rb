@@ -310,7 +310,8 @@ module Legion
                 { role: 'system', content: 'Do these two statements contradict each other? Return JSON.' },
                 { role: 'user', content: "A: #{content_a}\n\nB: #{content_b}" }
               ],
-              schema:   { type: 'object', properties: { contradicts: { type: 'boolean' } } }
+              schema:   { type: 'object', properties: { contradicts: { type: 'boolean' } } },
+              caller:   { extension: 'lex-apollo', runner: 'knowledge' }
             )
             result[:data]&.dig(:contradicts) == true
           rescue StandardError

@@ -20,7 +20,8 @@ module Legion
               messages: [
                 { role: 'user', content: entity_extraction_prompt(text: text, entity_types: types) }
               ],
-              schema:   entity_schema
+              schema:   entity_schema,
+              caller:   { extension: 'lex-apollo', runner: 'entity_extractor' }
             )
 
             raw_entities = result.dig(:data, :entities) || []
