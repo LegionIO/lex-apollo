@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.2] - 2026-03-24
+
+### Fixed
+- fix `undefined method 'scan_and_ingest' for module EntityExtractor` in EntityWatchdog actor — self-contained actors must override `runner_class` to return `self.class` so the framework dispatches to the actor instance, not the runner module
+
 ## [0.4.1] - 2026-03-23
 
 ### Changed

@@ -23,8 +23,8 @@ RSpec.describe Legion::Extensions::Apollo::Actor::EntityWatchdog do
   subject(:actor) { described_class.allocate }
 
   describe 'actor configuration' do
-    it 'uses EntityExtractor as runner_class' do
-      expect(actor.runner_class).to eq(Legion::Extensions::Apollo::Runners::EntityExtractor)
+    it 'uses self.class as runner_class for self-contained dispatch' do
+      expect(actor.runner_class).to eq(described_class)
     end
 
     it 'runs scan_and_ingest function' do

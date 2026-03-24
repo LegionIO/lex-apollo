@@ -16,7 +16,7 @@ module Legion
           TASK_LOG_LOOKBACK_SECONDS = 300
           TASK_LOG_LIMIT            = 50
 
-          def runner_class    = Legion::Extensions::Apollo::Runners::EntityExtractor
+          def runner_class    = self.class
           def runner_function = 'scan_and_ingest'
           def time            = 120
           def run_now?        = false
