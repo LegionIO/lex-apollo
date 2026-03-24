@@ -115,8 +115,15 @@ module Legion
             { deposited: deposited }
           end
 
+          MAX_ANTICIPATIONS = 3
+
           # Phase 6: Anticipate - pre-cache likely follow-up questions
-          def phase_anticipate(_facts, _synthesis)
+          def phase_anticipate(facts, _synthesis)
+            return [] if facts.empty?
+            return [] unless llm_available?
+
+            llm_anticipate(facts)
+          rescue StandardError
             []
           end
 
@@ -256,6 +263,55 @@ module Legion
 
             product = values.reduce(1.0) { |acc, v| acc * v }
             product**(1.0 / values.length)
+          end
+
+          def llm_anticipate(facts)
+            facts_text = facts.map { |f| "(#{f[:content_type]}) #{f[:content]}" }.join("\n")
+
+            prompt = <<~PROMPT
+              Given these knowledge entries, generate 1-3 likely follow-up questions a user might ask.
+
+              Knowledge:
+              #{facts_text}
+
+              Return JSON with a "questions" array of question strings.
+            PROMPT
+
+            result = Legion::LLM::Pipeline::GaiaCaller.structured(
+              message: prompt.strip,
+              schema: {
+                type: :object,
+                properties: {
+                  questions: { type: :array, items: { type: :string } }
+                },
+                required: ['questions']
+              },
+              phase: 'gas_anticipate'
+            )
+
+            content = result.respond_to?(:message) ? result.message[:content] : result.to_s
+            parsed = Legion::JSON.load(content)
+            questions = parsed.is_a?(Hash) ? (parsed[:questions] || parsed['questions'] || []) : []
+            questions = questions.first(MAX_ANTICIPATIONS)
+
+            questions.map do |q|
+              promote_to_pattern_store(question: q, facts: facts)
+              { question: q }
+            end
+          rescue StandardError
+            []
+          end
+
+          def promote_to_pattern_store(question:, facts:)
+            return unless defined?(Legion::Extensions::Agentic::TBI::PatternStore)
+
+            Legion::Extensions::Agentic::TBI::PatternStore.promote_candidate(
+              intent: question,
+              resolution: { source: 'gas_anticipate', facts: facts.map { |f| f[:content] } },
+              confidence: 0.5
+            )
+          rescue StandardError
+            nil
           end
 
           def llm_available?
