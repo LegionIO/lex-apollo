@@ -33,7 +33,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Gas, '.phase_relate' do
         entries: [
           { id: 'e1', content: 'HNSW is an approximate nearest neighbor algorithm', content_type: 'concept', confidence: 0.85 }
         ],
-        count: 1
+        count:   1
       }
     end
 

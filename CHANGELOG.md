@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0] - 2026-03-23
+
+### Added
+- `Runners::Gas`: 6-phase GAS (Generation-Augmented Storage) pipeline
+  - Phase 1 (Comprehend): LLM-based fact extraction via GaiaCaller, mechanical fallback
+  - Phase 2 (Extract): delegates to existing `EntityExtractor` runner
+  - Phase 3 (Relate): queries Apollo for similar entries, classifies 8 relationship types via LLM, confidence > 0.7 gate
+  - Phase 4 (Synthesize): generates derivative knowledge with geometric mean confidence, capped at 0.7
+  - Phase 5 (Deposit): atomic write of facts to Apollo via `Knowledge.handle_ingest`
+  - Phase 6 (Anticipate): generates follow-up questions, promotes to TBI PatternStore when available
+- `Actor::GasSubscriber`: subscription actor binding to `llm.audit.complete` routing key
+- `Transport::Queues::Gas`: durable queue for GAS audit event processing
+
 ## [0.3.9] - 2026-03-23
 
 ### Fixed

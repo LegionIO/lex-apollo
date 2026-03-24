@@ -30,7 +30,8 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Gas, '.phase_synthesize' do
       double(
         'Response',
         message: {
-          content: '{"synthesis":[{"content":"pgvector achieves fast similarity search through HNSW logarithmic indexing","content_type":"inference","source_indices":[0,1]}]}'
+          content: '{"synthesis":[{"content":"pgvector achieves fast search via HNSW",' \
+                   '"content_type":"inference","source_indices":[0,1]}]}'
         }
       )
     end
@@ -42,8 +43,8 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Gas, '.phase_synthesize' do
         {
           'synthesis' => [
             {
-              'content' => 'pgvector achieves fast similarity search through HNSW logarithmic indexing',
-              'content_type' => 'inference',
+              'content'        => 'pgvector achieves fast similarity search through HNSW logarithmic indexing',
+              'content_type'   => 'inference',
               'source_indices' => [0, 1]
             }
           ]

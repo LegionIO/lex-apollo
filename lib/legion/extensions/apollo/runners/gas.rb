@@ -19,12 +19,12 @@ module Legion
 
             {
               phases_completed: 6,
-              facts: facts.length,
-              entities: entities.length,
-              relations: relations.length,
-              synthesis: synthesis.length,
-              deposited: deposit_result,
-              anticipations: anticipations.length
+              facts:            facts.length,
+              entities:         entities.length,
+              relations:        relations.length,
+              synthesis:        synthesis.length,
+              deposited:        deposit_result,
+              anticipations:    anticipations.length
             }
           rescue StandardError => e
             Legion::Logging.warn("GAS pipeline error: #{e.message}") if defined?(Legion::Logging)
@@ -100,13 +100,13 @@ module Legion
             deposited = 0
             facts.each do |fact|
               Runners::Knowledge.handle_ingest(
-                content: fact[:content],
-                content_type: fact[:content_type].to_s,
-                tags: %w[gas auto_extracted],
-                source_agent: 'gas_pipeline',
-                source_provider: audit_event.dig(:routing, :provider)&.to_s,
+                content:          fact[:content],
+                content_type:     fact[:content_type].to_s,
+                tags:             %w[gas auto_extracted],
+                source_agent:     'gas_pipeline',
+                source_provider:  audit_event.dig(:routing, :provider)&.to_s,
                 knowledge_domain: 'general',
-                context: { source_request_id: audit_event[:request_id] }
+                context:          { source_request_id: audit_event[:request_id] }
               )
               deposited += 1
             rescue StandardError => e
@@ -161,24 +161,24 @@ module Legion
 
             result = Legion::LLM::Pipeline::GaiaCaller.structured(
               message: prompt.strip,
-              schema: {
-                type: :object,
+              schema:  {
+                type:       :object,
                 properties: {
                   relations: {
-                    type: :array,
+                    type:  :array,
                     items: {
-                      type: :object,
+                      type:       :object,
                       properties: {
                         relation_type: { type: :string },
-                        confidence: { type: :number }
+                        confidence:    { type: :number }
                       },
-                      required: %w[relation_type confidence]
+                      required:   %w[relation_type confidence]
                     }
                   }
                 },
-                required: ['relations']
+                required:   ['relations']
               },
-              phase: 'gas_relate'
+              phase:   'gas_relate'
             )
 
             content = result.respond_to?(:message) ? result.message[:content] : result.to_s
@@ -216,46 +216,48 @@ module Legion
 
             result = Legion::LLM::Pipeline::GaiaCaller.structured(
               message: prompt.strip,
-              schema: {
-                type: :object,
+              schema:  {
+                type:       :object,
                 properties: {
                   synthesis: {
-                    type: :array,
+                    type:  :array,
                     items: {
-                      type: :object,
+                      type:       :object,
                       properties: {
-                        content: { type: :string },
-                        content_type: { type: :string },
+                        content:        { type: :string },
+                        content_type:   { type: :string },
                         source_indices: { type: :array, items: { type: :integer } }
                       },
-                      required: %w[content content_type source_indices]
+                      required:   %w[content content_type source_indices]
                     }
                   }
                 },
-                required: ['synthesis']
+                required:   ['synthesis']
               },
-              phase: 'gas_synthesize'
+              phase:   'gas_synthesize'
             )
 
             content = result.respond_to?(:message) ? result.message[:content] : result.to_s
             parsed = Legion::JSON.load(content)
             items = parsed.is_a?(Hash) ? (parsed[:synthesis] || parsed['synthesis'] || []) : []
 
-            items.map do |item|
-              source_indices = item[:source_indices] || item['source_indices'] || []
-              source_confs = source_indices.filter_map { |i| facts[i]&.dig(:confidence) }
-              geo_mean = source_confs.empty? ? 0.5 : geometric_mean(source_confs)
-
-              {
-                content: item[:content] || item['content'],
-                content_type: (item[:content_type] || item['content_type'] || 'inference').to_sym,
-                status: :candidate,
-                confidence: [geo_mean, SYNTHESIS_CONFIDENCE_CAP].min,
-                source_indices: source_indices
-              }
-            end
+            items.map { |item| build_synthesis_entry(item, facts) }
           rescue StandardError
             []
+          end
+
+          def build_synthesis_entry(item, facts)
+            source_indices = item[:source_indices] || item['source_indices'] || []
+            source_confs = source_indices.filter_map { |i| facts[i]&.dig(:confidence) }
+            geo_mean = source_confs.empty? ? 0.5 : geometric_mean(source_confs)
+
+            {
+              content:        item[:content] || item['content'],
+              content_type:   (item[:content_type] || item['content_type'] || 'inference').to_sym,
+              status:         :candidate,
+              confidence:     [geo_mean, SYNTHESIS_CONFIDENCE_CAP].min,
+              source_indices: source_indices
+            }
           end
 
           def geometric_mean(values)
@@ -279,14 +281,14 @@ module Legion
 
             result = Legion::LLM::Pipeline::GaiaCaller.structured(
               message: prompt.strip,
-              schema: {
-                type: :object,
+              schema:  {
+                type:       :object,
                 properties: {
                   questions: { type: :array, items: { type: :string } }
                 },
-                required: ['questions']
+                required:   ['questions']
               },
-              phase: 'gas_anticipate'
+              phase:   'gas_anticipate'
             )
 
             content = result.respond_to?(:message) ? result.message[:content] : result.to_s
@@ -306,7 +308,7 @@ module Legion
             return unless defined?(Legion::Extensions::Agentic::TBI::PatternStore)
 
             Legion::Extensions::Agentic::TBI::PatternStore.promote_candidate(
-              intent: question,
+              intent:     question,
               resolution: { source: 'gas_anticipate', facts: facts.map { |f| f[:content] } },
               confidence: 0.5
             )
@@ -334,24 +336,24 @@ module Legion
 
             result = Legion::LLM::Pipeline::GaiaCaller.structured(
               message: prompt.strip,
-              schema: {
-                type: :object,
+              schema:  {
+                type:       :object,
                 properties: {
                   facts: {
-                    type: :array,
+                    type:  :array,
                     items: {
-                      type: :object,
+                      type:       :object,
                       properties: {
-                        content: { type: :string },
+                        content:      { type: :string },
                         content_type: { type: :string }
                       },
-                      required: %w[content content_type]
+                      required:   %w[content content_type]
                     }
                   }
                 },
-                required: ['facts']
+                required:   ['facts']
               },
-              phase: 'gas_comprehend'
+              phase:   'gas_comprehend'
             )
 
             content = result.respond_to?(:message) ? result.message[:content] : result.to_s
@@ -359,7 +361,7 @@ module Legion
             facts_array = parsed.is_a?(Hash) ? (parsed[:facts] || parsed['facts'] || []) : Array(parsed)
             facts_array.map do |f|
               {
-                content: f[:content] || f['content'],
+                content:      f[:content] || f['content'],
                 content_type: (f[:content_type] || f['content_type'] || 'fact').to_sym
               }
             end

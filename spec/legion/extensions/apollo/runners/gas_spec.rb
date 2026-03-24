@@ -7,13 +7,13 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Gas do
   describe '.process' do
     let(:audit_event) do
       {
-        request_id: 'req_abc',
-        messages: [{ role: :user, content: 'How does pgvector work?' }],
+        request_id:       'req_abc',
+        messages:         [{ role: :user, content: 'How does pgvector work?' }],
         response_content: 'pgvector uses HNSW indexes for approximate nearest neighbor search.',
-        routing: { provider: :anthropic, model: 'claude-opus-4-6' },
-        tokens: { input: 50, output: 30, total: 80 },
-        caller: { requested_by: { identity: 'user:matt', type: :user } },
-        timestamp: Time.now
+        routing:          { provider: :anthropic, model: 'claude-opus-4-6' },
+        tokens:           { input: 50, output: 30, total: 80 },
+        caller:           { requested_by: { identity: 'user:matt', type: :user } },
+        timestamp:        Time.now
       }
     end
 
