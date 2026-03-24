@@ -51,16 +51,34 @@ module Legion
           def phase_extract(audit_event, _facts)
             return [] unless defined?(Runners::EntityExtractor)
 
-            extractor = Class.new { extend Runners::EntityExtractor }
-            result = extractor.extract_entities(text: audit_event[:response_content])
+            result = Runners::EntityExtractor.extract_entities(text: audit_event[:response_content])
             result[:success] ? (result[:entities] || []) : []
           rescue StandardError
             []
           end
 
+          RELATION_TYPES = %w[
+            similar_to contradicts depends_on causes
+            part_of supersedes supports_by extends
+          ].freeze
+
+          RELATE_CONFIDENCE_GATE = 0.7
+
           # Phase 3: Relate - classify relationships between new and existing entries
-          def phase_relate(_facts, _entities)
-            []
+          def phase_relate(facts, _entities)
+            return [] unless defined?(Runners::Knowledge)
+
+            existing = fetch_similar_entries(facts)
+            return [] if existing.empty?
+
+            relations = []
+            facts.each do |fact|
+              existing.each do |entry|
+                relation = classify_relation(fact, entry)
+                relations << relation if relation
+              end
+            end
+            relations
           end
 
           # Phase 4: Synthesize - generate derivative knowledge
@@ -73,9 +91,8 @@ module Legion
             return { deposited: 0 } unless defined?(Runners::Knowledge)
 
             deposited = 0
-            knowledge = Class.new { extend Runners::Knowledge }
             facts.each do |fact|
-              knowledge.handle_ingest(
+              Runners::Knowledge.handle_ingest(
                 content: fact[:content],
                 content_type: fact[:content_type].to_s,
                 tags: %w[gas auto_extracted],
@@ -94,6 +111,80 @@ module Legion
           # Phase 6: Anticipate - pre-cache likely follow-up questions
           def phase_anticipate(_facts, _synthesis)
             []
+          end
+
+          def fetch_similar_entries(facts)
+            entries = []
+            facts.each do |fact|
+              result = Runners::Knowledge.retrieve_relevant(query: fact[:content], limit: 3, min_confidence: 0.3)
+              entries.concat(result[:entries]) if result[:success] && result[:entries]&.any?
+            rescue StandardError
+              next
+            end
+            entries.uniq { |e| e[:id] }
+          end
+
+          def classify_relation(fact, entry)
+            if llm_available?
+              llm_classify_relation(fact, entry)
+            else
+              { from_content: fact[:content], to_id: entry[:id], relation_type: 'similar_to', confidence: 0.5 }
+            end
+          rescue StandardError
+            { from_content: fact[:content], to_id: entry[:id], relation_type: 'similar_to', confidence: 0.5 }
+          end
+
+          def llm_classify_relation(fact, entry)
+            prompt = <<~PROMPT
+              Classify the relationship between these two knowledge entries.
+              Valid types: #{RELATION_TYPES.join(', ')}
+
+              Entry A (new): #{fact[:content]}
+              Entry B (existing): #{entry[:content]}
+
+              Return JSON with relation_type and confidence (0.0-1.0).
+            PROMPT
+
+            result = Legion::LLM::Pipeline::GaiaCaller.structured(
+              message: prompt.strip,
+              schema: {
+                type: :object,
+                properties: {
+                  relations: {
+                    type: :array,
+                    items: {
+                      type: :object,
+                      properties: {
+                        relation_type: { type: :string },
+                        confidence: { type: :number }
+                      },
+                      required: %w[relation_type confidence]
+                    }
+                  }
+                },
+                required: ['relations']
+              },
+              phase: 'gas_relate'
+            )
+
+            content = result.respond_to?(:message) ? result.message[:content] : result.to_s
+            parsed = Legion::JSON.load(content)
+            rels = parsed.is_a?(Hash) ? (parsed[:relations] || parsed['relations'] || []) : []
+            best = rels.max_by { |r| r[:confidence] || r['confidence'] || 0 }
+
+            return fallback_relation(fact, entry) unless best
+
+            conf = best[:confidence] || best['confidence'] || 0
+            rtype = best[:relation_type] || best['relation_type']
+            return fallback_relation(fact, entry) if conf < RELATE_CONFIDENCE_GATE || !RELATION_TYPES.include?(rtype)
+
+            { from_content: fact[:content], to_id: entry[:id], relation_type: rtype, confidence: conf }
+          rescue StandardError
+            fallback_relation(fact, entry)
+          end
+
+          def fallback_relation(fact, entry)
+            { from_content: fact[:content], to_id: entry[:id], relation_type: 'similar_to', confidence: 0.5 }
           end
 
           def llm_available?
