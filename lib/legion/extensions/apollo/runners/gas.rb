@@ -81,8 +81,15 @@ module Legion
             relations
           end
 
+          SYNTHESIS_CONFIDENCE_CAP = 0.7
+
           # Phase 4: Synthesize - generate derivative knowledge
-          def phase_synthesize(_facts, _relations)
+          def phase_synthesize(facts, _relations)
+            return [] if facts.length < 2
+            return [] unless llm_available?
+
+            llm_synthesize(facts)
+          rescue StandardError
             []
           end
 
@@ -185,6 +192,70 @@ module Legion
 
           def fallback_relation(fact, entry)
             { from_content: fact[:content], to_id: entry[:id], relation_type: 'similar_to', confidence: 0.5 }
+          end
+
+          def llm_synthesize(facts)
+            facts_text = facts.each_with_index.map { |f, i| "[#{i}] (#{f[:content_type]}) #{f[:content]}" }.join("\n")
+
+            prompt = <<~PROMPT
+              Given these knowledge entries, generate derivative insights (inferences, implications, or connections).
+              Each synthesis should combine information from multiple sources.
+
+              Entries:
+              #{facts_text}
+
+              Return JSON with a "synthesis" array where each item has: content (string), content_type (inference/implication/connection), source_indices (array of entry indices used).
+            PROMPT
+
+            result = Legion::LLM::Pipeline::GaiaCaller.structured(
+              message: prompt.strip,
+              schema: {
+                type: :object,
+                properties: {
+                  synthesis: {
+                    type: :array,
+                    items: {
+                      type: :object,
+                      properties: {
+                        content: { type: :string },
+                        content_type: { type: :string },
+                        source_indices: { type: :array, items: { type: :integer } }
+                      },
+                      required: %w[content content_type source_indices]
+                    }
+                  }
+                },
+                required: ['synthesis']
+              },
+              phase: 'gas_synthesize'
+            )
+
+            content = result.respond_to?(:message) ? result.message[:content] : result.to_s
+            parsed = Legion::JSON.load(content)
+            items = parsed.is_a?(Hash) ? (parsed[:synthesis] || parsed['synthesis'] || []) : []
+
+            items.map do |item|
+              source_indices = item[:source_indices] || item['source_indices'] || []
+              source_confs = source_indices.filter_map { |i| facts[i]&.dig(:confidence) }
+              geo_mean = source_confs.empty? ? 0.5 : geometric_mean(source_confs)
+
+              {
+                content: item[:content] || item['content'],
+                content_type: (item[:content_type] || item['content_type'] || 'inference').to_sym,
+                status: :candidate,
+                confidence: [geo_mean, SYNTHESIS_CONFIDENCE_CAP].min,
+                source_indices: source_indices
+              }
+            end
+          rescue StandardError
+            []
+          end
+
+          def geometric_mean(values)
+            return 0.0 if values.empty?
+
+            product = values.reduce(1.0) { |acc, v| acc * v }
+            product**(1.0 / values.length)
           end
 
           def llm_available?
