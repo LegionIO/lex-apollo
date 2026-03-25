@@ -23,6 +23,9 @@ if defined?(Legion::Transport)
   require 'legion/extensions/apollo/transport/queues/gas'
   require 'legion/extensions/apollo/transport/messages/ingest'
   require 'legion/extensions/apollo/transport/messages/query'
+  require 'legion/extensions/apollo/transport/messages/writeback'
+  require 'legion/extensions/apollo/transport/queues/writeback_store'
+  require 'legion/extensions/apollo/transport/queues/writeback_vectorize'
 end
 
 module Legion
