@@ -110,6 +110,8 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
       let(:mock_entry) { double('entry', id: 'uuid-123', embedding: nil) }
       let(:empty_dataset) { double('dataset', each: nil) }
 
+      let(:mock_db) { double('db') }
+
       before do
         stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
         stub_const('Legion::Data::Model::ApolloRelation', mock_relation_class)
@@ -119,8 +121,8 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
           .and_return(Array.new(1536, 0.0))
 
         allow(mock_entry_class).to receive(:where).and_return(double(exclude: double(limit: empty_dataset)))
-        allow(mock_entry_class).to receive(:exclude)
-          .and_return(double(exclude: double(limit: double(all: []))))
+        allow(mock_entry_class).to receive(:db).and_return(mock_db)
+        allow(mock_db).to receive(:fetch).and_return(double(all: []))
         allow(mock_entry_class).to receive(:create).and_return(mock_entry)
         allow(mock_expertise_class).to receive(:where).and_return(double(first: nil))
         allow(mock_expertise_class).to receive(:create)
@@ -342,6 +344,83 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
           hash_including(domain: 'clinical')
         ).and_call_original
         host.retrieve_relevant(query: 'treatment', domain: 'clinical')
+      end
+    end
+  end
+
+  describe '#handle_traverse' do
+    let(:host) { Object.new.extend(described_class) }
+
+    context 'when Apollo data is not available' do
+      before { hide_const('Legion::Data::Model::ApolloEntry') if defined?(Legion::Data::Model::ApolloEntry) }
+
+      it 'returns a structured error' do
+        result = host.handle_traverse(entry_id: 'uuid-123')
+        expect(result[:success]).to be false
+        expect(result[:error]).to eq('apollo_data_not_available')
+      end
+    end
+
+    context 'when Apollo data is available' do
+      let(:mock_entry_class) { double('ApolloEntry') }
+      let(:mock_access_log_class) { double('ApolloAccessLog') }
+      let(:mock_db) { double('db') }
+      let(:traversal_results) do
+        [{ id: 'uuid-1', content: 'root', content_type: 'fact',
+           confidence: 0.8, tags: ['ruby'], source_agent: 'agent-1',
+           depth: 0, activation: 1.0 },
+         { id: 'uuid-2', content: 'related', content_type: 'concept',
+           confidence: 0.6, tags: ['ruby'], source_agent: 'agent-2',
+           depth: 1, activation: 0.48 }]
+      end
+
+      before do
+        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
+        stub_const('Legion::Data::Model::ApolloAccessLog', mock_access_log_class)
+        allow(mock_entry_class).to receive(:db).and_return(mock_db)
+        allow(mock_db).to receive(:fetch).and_return(double(all: traversal_results))
+        allow(mock_access_log_class).to receive(:create)
+      end
+
+      it 'executes traversal SQL and returns formatted entries' do
+        result = host.handle_traverse(entry_id: 'uuid-1', agent_id: 'agent-x')
+        expect(result[:success]).to be true
+        expect(result[:count]).to eq(2)
+        expect(result[:entries].first[:depth]).to eq(0)
+        expect(result[:entries].last[:activation]).to eq(0.48)
+      end
+
+      it 'logs access for known agents' do
+        expect(mock_access_log_class).to receive(:create).with(
+          hash_including(agent_id: 'agent-x', action: 'query')
+        )
+        host.handle_traverse(entry_id: 'uuid-1', agent_id: 'agent-x')
+      end
+
+      it 'skips access logging for unknown agents' do
+        expect(mock_access_log_class).not_to receive(:create)
+        host.handle_traverse(entry_id: 'uuid-1')
+      end
+
+      it 'filters invalid relation_types' do
+        expect(Legion::Extensions::Apollo::Helpers::GraphQuery).to receive(:build_traversal_sql).with(
+          hash_including(relation_types: ['causes'])
+        ).and_call_original
+        host.handle_traverse(entry_id: 'uuid-1', relation_types: %w[causes invalid_type])
+      end
+    end
+
+    context 'when Sequel raises an error' do
+      before do
+        stub_const('Legion::Data::Model::ApolloEntry', Class.new)
+        allow(Legion::Data::Model::ApolloEntry).to receive(:db)
+          .and_raise(Sequel::Error, 'connection lost')
+      end
+
+      it 'returns a structured error' do
+        result = host.handle_traverse(entry_id: 'uuid-1')
+        expect(result[:success]).to be false
+        expect(result[:error]).to eq('connection lost')
       end
     end
   end

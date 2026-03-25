@@ -140,6 +140,36 @@ module Legion
             { success: false, error: e.message }
           end
 
+          def handle_traverse(entry_id:, depth: Helpers::GraphQuery.default_depth, relation_types: nil, agent_id: 'unknown', **)
+            return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
+
+            # Whitelist relation_types to prevent SQL injection (they are string-interpolated in build_traversal_sql)
+            if relation_types
+              allowed = Helpers::Confidence::RELATION_TYPES
+              relation_types = relation_types.select { |t| allowed.include?(t.to_s) }
+            end
+
+            sql = Helpers::GraphQuery.build_traversal_sql(depth: depth, relation_types: relation_types)
+            db = Legion::Data::Model::ApolloEntry.db
+            entries = db.fetch(sql, entry_id: entry_id).all
+
+            if entries.any? && agent_id != 'unknown'
+              Legion::Data::Model::ApolloAccessLog.create(
+                entry_id: entry_id, agent_id: agent_id, action: 'query'
+              )
+            end
+
+            formatted = entries.map do |entry|
+              { id: entry[:id], content: entry[:content], content_type: entry[:content_type],
+                confidence: entry[:confidence], tags: entry[:tags], source_agent: entry[:source_agent],
+                depth: entry[:depth], activation: entry[:activation] }
+            end
+
+            { success: true, entries: formatted, count: formatted.size }
+          rescue Sequel::Error => e
+            { success: false, error: e.message }
+          end
+
           def redistribute_knowledge(agent_id:, min_confidence: Helpers::Confidence.apollo_setting(:query, :redistribute_min_confidence, default: 0.5), **)
             return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
 
@@ -281,25 +311,30 @@ module Legion
             sim_threshold = Helpers::Confidence.apollo_setting(:contradiction, :similarity_threshold, default: 0.7)
             rel_weight = Helpers::Confidence.apollo_setting(:contradiction, :relation_weight, default: 0.8)
 
-            similar = Legion::Data::Model::ApolloEntry
-                      .exclude(id: entry_id)
-                      .exclude(embedding: nil)
-                      .limit(sim_limit).all
+            db = Legion::Data::Model::ApolloEntry.db
+            similar = db.fetch(
+              "SELECT id, content, embedding FROM apollo_entries WHERE id != $entry_id AND embedding IS NOT NULL ORDER BY embedding <=> $embedding LIMIT #{sim_limit}", # rubocop:disable Layout/LineLength
+              entry_id:  entry_id,
+              embedding: Sequel.lit("'[#{embedding.join(',')}]'::vector")
+            ).all
 
             contradictions = []
             similar.each do |existing|
-              sim = Helpers::Similarity.cosine_similarity(vec_a: embedding, vec_b: existing.embedding)
+              existing_embedding = existing[:embedding]
+              next unless existing_embedding
+
+              sim = Helpers::Similarity.cosine_similarity(vec_a: embedding, vec_b: existing_embedding)
               next unless sim > sim_threshold
-              next unless llm_detects_conflict?(content, existing.content)
+              next unless llm_detects_conflict?(content, existing[:content])
 
               Legion::Data::Model::ApolloRelation.create(
-                from_entry_id: entry_id, to_entry_id: existing.id,
+                from_entry_id: entry_id, to_entry_id: existing[:id],
                 relation_type: 'contradicts', source_agent: 'system:contradiction',
                 weight: rel_weight
               )
 
-              Legion::Data::Model::ApolloEntry.where(id: [entry_id, existing.id]).update(status: 'disputed')
-              contradictions << existing.id
+              Legion::Data::Model::ApolloEntry.where(id: [entry_id, existing[:id]]).update(status: 'disputed')
+              contradictions << existing[:id]
             end
             contradictions
           rescue Sequel::Error

@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.5] - 2026-03-25
+
+### Added
+- `handle_traverse` method in Knowledge runner: executes recursive CTE graph traversal SQL, returns formatted entries with depth and activation scores (closes #3)
+- `Runners::Request` client-tier runner with `data_required? false`: routes `query`, `retrieve`, `ingest`, `traverse` locally when DB is available or via transport when it isn't (closes #1)
+- REST API (`Api` Sinatra app) with 8 endpoints: health, query, ingest, traverse, retrieve, deprecate, expertise, stats (closes #5)
+- Conditional `require 'legion/extensions/apollo/api'` when Sinatra is available
+
+### Fixed
+- Contradiction detection now orders by embedding distance (`<=>` pgvector operator) before LIMIT, scanning the most semantically similar entries instead of arbitrary rows (closes #4)
+- Whitelisted `relation_types` in `handle_traverse` against `RELATION_TYPES` constant to prevent SQL injection
+
+### Changed
+- GAIA phase wiring updated: `knowledge_retrieval` now targets `Request#retrieve` instead of `Knowledge#retrieve_relevant` (in legion-gaia)
+
 ## [0.4.4] - 2026-03-24
 
 ### Changed
