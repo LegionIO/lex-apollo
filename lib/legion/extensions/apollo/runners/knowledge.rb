@@ -112,6 +112,8 @@ module Legion
             db = Legion::Data::Model::ApolloEntry.db
             entries = db.fetch(sql, embedding: Sequel.lit("'[#{embedding.join(',')}]'::vector")).all
 
+            entries = entries.reject { |e| e[:distance].respond_to?(:nan?) && e[:distance].nan? }
+
             entries.each do |entry|
               Legion::Data::Model::ApolloEntry.where(id: entry[:id]).update(
                 access_count: Sequel.expr(:access_count) + 1,
@@ -130,7 +132,7 @@ module Legion
 
             formatted = entries.map do |entry|
               { id: entry[:id], content: entry[:content], content_type: entry[:content_type],
-                confidence: entry[:confidence], distance: entry[:distance],
+                confidence: entry[:confidence], distance: entry[:distance]&.to_f,
                 tags: entry[:tags], source_agent: entry[:source_agent],
                 knowledge_domain: entry[:knowledge_domain] }
             end
@@ -218,6 +220,7 @@ module Legion
 
             db = Legion::Data::Model::ApolloEntry.db
             entries = db.fetch(sql, embedding: Sequel.lit("'[#{embedding.join(',')}]'::vector")).all
+            entries = entries.reject { |e| e[:distance].respond_to?(:nan?) && e[:distance].nan? }
 
             entries.each do |entry|
               Legion::Data::Model::ApolloEntry.where(id: entry[:id]).update(
@@ -228,7 +231,7 @@ module Legion
 
             formatted = entries.map do |entry|
               { id: entry[:id], content: entry[:content], content_type: entry[:content_type],
-                confidence: entry[:confidence], distance: entry[:distance],
+                confidence: entry[:confidence], distance: entry[:distance]&.to_f,
                 tags: entry[:tags], source_agent: entry[:source_agent],
                 knowledge_domain: entry[:knowledge_domain] }
             end
@@ -313,7 +316,7 @@ module Legion
 
             db = Legion::Data::Model::ApolloEntry.db
             similar = db.fetch(
-              "SELECT id, content, embedding FROM apollo_entries WHERE id != $entry_id AND embedding IS NOT NULL ORDER BY embedding <=> $embedding LIMIT #{sim_limit}", # rubocop:disable Layout/LineLength
+              "SELECT id, content, embedding FROM apollo_entries WHERE id != :entry_id AND embedding IS NOT NULL ORDER BY embedding <=> :embedding LIMIT #{sim_limit}", # rubocop:disable Layout/LineLength
               entry_id:  entry_id,
               embedding: Sequel.lit("'[#{embedding.join(',')}]'::vector")
             ).all

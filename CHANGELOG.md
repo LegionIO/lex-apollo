@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.6] - 2026-03-25
+
+### Added
+- Apollo-specific embedding provider/model settings: `apollo.embedding.provider` and `apollo.embedding.model` override LLM defaults
+- `embedding_opts` helper reads Apollo settings and passes `provider:`/`model:` to `Legion::LLM.embed`
+- Local-first embedding: `detect_local_model` checks Ollama for pulled 1024-dim models (`mxbai-embed-large`, `bge-large`, `snowflake-arctic-embed`) before falling back to cloud provider
+
+### Changed
+- `DEFAULT_DIMENSION` changed from 1536 to 1024 for cross-provider compatibility (Bedrock Titan v2, OpenAI with dimensions:, Ollama models)
+- `Helpers::Embedding.generate` now passes provider/model from Apollo settings, falling back to LLM defaults when not configured
+
 ## [0.4.5] - 2026-03-25
 
 ### Added

@@ -32,7 +32,7 @@ module Legion
                 SELECT e.id, e.content, e.content_type, e.confidence, e.tags, e.source_agent,
                        0 AS depth, 1.0::float AS activation
                 FROM apollo_entries e
-                WHERE e.id = $entry_id
+                WHERE e.id = :entry_id
 
                 UNION ALL
 
@@ -72,11 +72,11 @@ module Legion
             <<~SQL
               SELECT e.id, e.content, e.content_type, e.confidence, e.tags, e.source_agent,
                      e.access_count, e.created_at, e.knowledge_domain,
-                     (e.embedding <=> $embedding) AS distance
+                     (e.embedding <=> :embedding) AS distance
               FROM apollo_entries e
               WHERE #{where_clause}
                 AND e.embedding IS NOT NULL
-              ORDER BY e.embedding <=> $embedding
+              ORDER BY e.embedding <=> :embedding
               LIMIT #{limit}
             SQL
           end

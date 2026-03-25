@@ -24,7 +24,7 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::GraphQuery do
       expect(sql).to include('apollo_entries')
       expect(sql).to include('apollo_relations')
       expect(sql).to include('WITH RECURSIVE')
-      expect(sql).to include('$entry_id')
+      expect(sql).to include(':entry_id')
     end
 
     it 'includes relation type filter when specified' do
@@ -49,7 +49,7 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::GraphQuery do
     it 'returns SQL with vector placeholder' do
       sql = described_class.build_semantic_search_sql(limit: 5, min_confidence: 0.3)
       expect(sql).to include('apollo_entries')
-      expect(sql).to include('$embedding')
+      expect(sql).to include(':embedding')
       expect(sql).to include('<=>')
       expect(sql).to include('LIMIT 5')
     end

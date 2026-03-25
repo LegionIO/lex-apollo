@@ -12,8 +12,8 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Embedding do
 
       it 'returns a zero vector of the correct dimension' do
         result = described_class.generate(text: 'hello world')
-        expect(result).to eq(Array.new(1536, 0.0))
-        expect(result.size).to eq(1536)
+        expect(result).to eq(Array.new(1024, 0.0))
+        expect(result.size).to eq(1024)
       end
     end
 
@@ -24,12 +24,12 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Embedding do
 
       it 'returns a zero vector' do
         result = described_class.generate(text: 'hello world')
-        expect(result).to eq(Array.new(1536, 0.0))
+        expect(result).to eq(Array.new(1024, 0.0))
       end
     end
 
     context 'when Legion::LLM is available and started' do
-      let(:mock_vector) { Array.new(1536) { rand(-1.0..1.0) } }
+      let(:mock_vector) { Array.new(1024) { rand(-1.0..1.0) } }
 
       before do
         llm = Module.new do
@@ -44,7 +44,7 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Embedding do
       it 'returns the vector from the LLM response hash' do
         result = described_class.generate(text: 'hello world')
         expect(result).to eq(mock_vector)
-        expect(Legion::LLM).to have_received(:embed).with('hello world')
+        expect(Legion::LLM).to have_received(:embed).with('hello world', **{})
       end
     end
 
@@ -120,7 +120,7 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Embedding do
       end
 
       it 'returns the default dimension' do
-        expect(described_class.configured_dimension).to eq(1536)
+        expect(described_class.configured_dimension).to eq(1024)
       end
     end
   end

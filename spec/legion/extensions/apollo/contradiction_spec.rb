@@ -36,7 +36,7 @@ RSpec.describe 'Apollo Contradiction Detection' do
         allow(mock_db).to receive(:fetch).and_return(double(all: []))
         knowledge.send(:detect_contradictions, 'uuid-1', embedding, 'test')
         expect(mock_db).to have_received(:fetch).with(
-          a_string_including('ORDER BY embedding <=> $embedding'),
+          a_string_including('ORDER BY embedding <=> :embedding'),
           hash_including(:entry_id, :embedding)
         )
       end

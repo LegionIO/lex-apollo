@@ -10,12 +10,25 @@ module Legion
           module_function
 
           def cosine_similarity(vec_a:, vec_b:, **)
+            vec_a = parse_vector(vec_a)
+            vec_b = parse_vector(vec_b)
+            return 0.0 unless vec_a.is_a?(Array) && vec_b.is_a?(Array)
+
             dot = vec_a.zip(vec_b).sum { |x, y| x * y }
             mag_a = Math.sqrt(vec_a.sum { |x| x**2 })
             mag_b = Math.sqrt(vec_b.sum { |x| x**2 })
             return 0.0 if mag_a.zero? || mag_b.zero?
 
             dot / (mag_a * mag_b)
+          end
+
+          def parse_vector(vec)
+            return vec if vec.is_a?(Array)
+            return nil unless vec.is_a?(String)
+
+            ::JSON.parse(vec)
+          rescue StandardError
+            nil
           end
 
           def above_corroboration_threshold?(similarity:, **)
