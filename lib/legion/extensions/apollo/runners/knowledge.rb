@@ -2,7 +2,6 @@
 
 require 'json'
 require_relative '../helpers/confidence'
-require_relative '../helpers/embedding'
 
 module Legion
   module Extensions
@@ -75,7 +74,7 @@ module Legion
               end
             end
 
-            embedding = Helpers::Embedding.generate(text: content)
+            embedding = embed_text(content)
             content_type_sym = content_type.to_s
             tag_array = defined?(Helpers::TagNormalizer) ? Helpers::TagNormalizer.normalize_all(tags) : Array(tags)
             domain = knowledge_domain || tag_array.first || 'general'
@@ -119,7 +118,7 @@ module Legion
           def handle_query(query:, limit: Helpers::GraphQuery.default_query_limit, min_confidence: Helpers::GraphQuery.default_query_min_confidence, status: [:confirmed], tags: nil, domain: nil, agent_id: 'unknown', **) # rubocop:disable Metrics/ParameterLists, Layout/LineLength
             return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
 
-            embedding = Helpers::Embedding.generate(text: query)
+            embedding = embed_text(query)
             sql = Helpers::GraphQuery.build_semantic_search_sql(
               limit: limit, min_confidence: min_confidence,
               statuses: Array(status).map(&:to_s), tags: tags, domain: domain
@@ -228,7 +227,7 @@ module Legion
 
             return { success: true, entries: [], count: 0 } if query.nil? || query.to_s.strip.empty?
 
-            embedding = Helpers::Embedding.generate(text: query.to_s)
+            embedding = embed_text(query.to_s)
             sql = Helpers::GraphQuery.build_semantic_search_sql(
               limit: limit, min_confidence: min_confidence,
               statuses: ['confirmed'], tags: tags, domain: domain
@@ -309,6 +308,14 @@ module Legion
           end
 
           private
+
+          def embed_text(text)
+            result = Legion::LLM::Embeddings.generate(text: text)
+            vector = result.is_a?(Hash) ? result[:vector] : result
+            vector.is_a?(Array) && vector.any? ? vector : Array.new(1024, 0.0)
+          rescue StandardError
+            Array.new(1024, 0.0)
+          end
 
           def allowed_domains_for(target_domain)
             rules = if defined?(Legion::Settings) && Legion::Settings.dig(:apollo, :domain_isolation)

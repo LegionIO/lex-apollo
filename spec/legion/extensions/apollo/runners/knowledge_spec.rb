@@ -3,7 +3,6 @@
 require 'spec_helper'
 require 'legion/extensions/apollo/helpers/confidence'
 require 'legion/extensions/apollo/helpers/similarity'
-require 'legion/extensions/apollo/helpers/embedding'
 require 'legion/extensions/apollo/helpers/graph_query'
 require 'legion/extensions/apollo/helpers/tag_normalizer'
 require 'legion/extensions/apollo/helpers/writeback'
@@ -14,6 +13,15 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
     obj = Object.new
     obj.extend(described_class)
     obj
+  end
+
+  before do
+    embeddings_mod = Module.new do
+      def self.generate(*, **)
+        { vector: Array.new(1024, 0.0), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 }
+      end
+    end
+    stub_const('Legion::LLM::Embeddings', embeddings_mod)
   end
 
   describe '#store_knowledge' do
@@ -119,8 +127,8 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         stub_const('Legion::Data::Model::ApolloRelation', mock_relation_class)
         stub_const('Legion::Data::Model::ApolloExpertise', mock_expertise_class)
         stub_const('Legion::Data::Model::ApolloAccessLog', mock_access_log_class)
-        allow(Legion::Extensions::Apollo::Helpers::Embedding).to receive(:generate)
-          .and_return(Array.new(1536, 0.0))
+        allow(Legion::LLM::Embeddings).to receive(:generate)
+          .and_return({ vector: Array.new(1024, 0.0), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
 
         # Corroboration lookup chain
         allow(mock_entry_class).to receive(:where).and_return(double(exclude: double(limit: empty_dataset)))
@@ -249,8 +257,8 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
     context 'when Sequel raises an error' do
       before do
         stub_const('Legion::Data::Model::ApolloEntry', Class.new)
-        allow(Legion::Extensions::Apollo::Helpers::Embedding).to receive(:generate)
-          .and_return(Array.new(1536, 0.0))
+        allow(Legion::LLM::Embeddings).to receive(:generate)
+          .and_return({ vector: Array.new(1024, 0.0), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
         allow(Legion::Data::Model::ApolloEntry).to receive(:where)
           .and_raise(Sequel::Error, 'connection lost')
       end
@@ -289,8 +297,8 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
       before do
         stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
         stub_const('Legion::Data::Model::ApolloAccessLog', mock_access_log_class)
-        allow(Legion::Extensions::Apollo::Helpers::Embedding).to receive(:generate)
-          .and_return(Array.new(1536, 0.0))
+        allow(Legion::LLM::Embeddings).to receive(:generate)
+          .and_return({ vector: Array.new(1024, 0.0), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
         allow(mock_entry_class).to receive(:db).and_return(mock_db)
         allow(mock_db).to receive(:fetch).and_return(double(all: sample_entries))
         allow(mock_entry_class).to receive(:where).and_return(double(update: true))
@@ -324,8 +332,8 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
 
       before do
         stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
-        allow(Legion::Extensions::Apollo::Helpers::Embedding).to receive(:generate)
-          .and_return(Array.new(1536, 0.0))
+        allow(Legion::LLM::Embeddings).to receive(:generate)
+          .and_return({ vector: Array.new(1024, 0.0), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
         allow(mock_entry_class).to receive(:db).and_return(mock_db)
         allow(mock_db).to receive(:fetch).and_return(double(all: []))
       end
@@ -380,8 +388,8 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
 
       before do
         stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
-        allow(Legion::Extensions::Apollo::Helpers::Embedding).to receive(:generate)
-          .and_return(Array.new(1536, 0.0))
+        allow(Legion::LLM::Embeddings).to receive(:generate)
+          .and_return({ vector: Array.new(1024, 0.0), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
         allow(mock_entry_class).to receive(:db).and_return(mock_db)
         allow(mock_db).to receive(:fetch).and_return(double(all: sample_entries))
         allow(mock_entry_class).to receive(:where).and_return(double(update: true))

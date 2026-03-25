@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.8] - 2026-03-25
+
+### Changed
+- Removed `Helpers::Embedding` direct Ollama bypass; all embedding generation now routes through `Legion::LLM::Embeddings.generate`
+- `Runners::Knowledge`, `Helpers::Writeback`, and `Actor::WritebackVectorize` all use `Legion::LLM::Embeddings.generate` and extract `[:vector]` from the result hash
+- Zero-vector fallback (`Array.new(1024, 0.0)`) preserved when LLM is unavailable or returns nil vector
+
+### Removed
+- `lib/legion/extensions/apollo/helpers/embedding.rb` — direct Faraday/Ollama embedding bypass (superseded by `Legion::LLM` provider routing)
+- `spec/legion/extensions/apollo/helpers/embedding_spec.rb` — tests for removed helper
+
 ## [0.4.7] - 2026-03-25
 
 ### Added
