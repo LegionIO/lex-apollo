@@ -14,7 +14,9 @@ module Legion
 
           def handle_vectorize(payload)
             payload = symbolize(payload)
-            embedding = Helpers::Embedding.generate(text: payload[:content])
+            result = Legion::LLM::Embeddings.generate(text: payload[:content])
+            vector = result.is_a?(Hash) ? result[:vector] : result
+            embedding = vector.is_a?(Array) && vector.any? ? vector : Array.new(1024, 0.0)
             enriched = payload.merge(embedding: embedding)
 
             if Helpers::Capability.can_write?

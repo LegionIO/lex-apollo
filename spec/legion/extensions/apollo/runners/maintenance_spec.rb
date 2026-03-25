@@ -3,7 +3,6 @@
 require 'spec_helper'
 require 'legion/extensions/apollo/helpers/confidence'
 require 'legion/extensions/apollo/helpers/similarity'
-require 'legion/extensions/apollo/helpers/embedding'
 require 'legion/extensions/apollo/runners/maintenance'
 
 RSpec.describe Legion::Extensions::Apollo::Runners::Maintenance do

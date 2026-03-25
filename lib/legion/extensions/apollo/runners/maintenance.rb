@@ -2,7 +2,6 @@
 
 require_relative '../helpers/confidence'
 require_relative '../helpers/similarity'
-require_relative '../helpers/embedding'
 
 module Legion
   module Extensions

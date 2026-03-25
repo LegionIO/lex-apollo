@@ -64,8 +64,9 @@ module Legion
             can_write = Helpers::Capability.can_write?
 
             if can_embed
-              embedding = Helpers::Embedding.generate(text: payload[:content])
-              payload[:embedding] = embedding
+              result = Legion::LLM::Embeddings.generate(text: payload[:content])
+              vector = result.is_a?(Hash) ? result[:vector] : result
+              payload[:embedding] = vector.is_a?(Array) && vector.any? ? vector : Array.new(1024, 0.0)
             end
 
             if can_write && can_embed
