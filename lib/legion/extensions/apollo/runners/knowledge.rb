@@ -59,12 +59,25 @@ module Legion
             }
           end
 
-          def handle_ingest(content:, content_type:, tags: [], source_agent: 'unknown', source_provider: nil, source_channel: nil, knowledge_domain: nil, context: {}, **) # rubocop:disable Metrics/ParameterLists, Layout/LineLength
+          def handle_ingest(content:, content_type:, tags: [], source_agent: 'unknown', source_provider: nil, source_channel: nil, knowledge_domain: nil, submitted_by: nil, submitted_from: nil, content_hash: nil, context: {}, **) # rubocop:disable Metrics/ParameterLists, Layout/LineLength
             return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
+
+            # Content hash dedup
+            hash = content_hash || (defined?(Helpers::Writeback) ? Helpers::Writeback.content_hash(content) : nil)
+            if hash
+              existing = Legion::Data::Model::ApolloEntry
+                .where(content_hash: hash)
+                .exclude(status: 'archived')
+                .first
+              if existing
+                existing.update(confidence: [existing.confidence + Helpers::Confidence.retrieval_boost, 1.0].min)
+                return { success: true, entry_id: existing.id, deduped: true }
+              end
+            end
 
             embedding = Helpers::Embedding.generate(text: content)
             content_type_sym = content_type.to_s
-            tag_array = Array(tags)
+            tag_array = defined?(Helpers::TagNormalizer) ? Helpers::TagNormalizer.normalize_all(tags) : Array(tags)
             domain = knowledge_domain || tag_array.first || 'general'
 
             corroborated, existing_id = find_corroboration(embedding, content_type_sym, source_agent, source_channel)
@@ -81,6 +94,9 @@ module Legion
                 tags:             Sequel.pg_array(tag_array),
                 status:           'candidate',
                 knowledge_domain: domain,
+                submitted_by:     submitted_by,
+                submitted_from:   submitted_from,
+                content_hash:     hash,
                 embedding:        Sequel.lit("'[#{embedding.join(',')}]'::vector")
               )
               existing_id = new_entry.id
