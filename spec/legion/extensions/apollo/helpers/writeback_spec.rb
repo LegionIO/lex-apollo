@@ -80,6 +80,68 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Writeback do
     end
   end
 
+  describe '.write_directly' do
+    let(:payload) do
+      {
+        content:      'test content for ingest',
+        tags:         %w[test ruby],
+        content_type: 'observation',
+        embedding:    Array.new(1024, 0.1)
+      }
+    end
+
+    context 'when Legion::Apollo is defined' do
+      before do
+        stub_const('Legion::Apollo', Module.new)
+        allow(Legion::Apollo).to receive(:ingest)
+      end
+
+      it 'routes through Legion::Apollo.ingest' do
+        described_class.write_directly(payload)
+        expect(Legion::Apollo).to have_received(:ingest).with(**payload)
+      end
+
+      it 'does not call Runners::Knowledge.handle_ingest directly' do
+        knowledge_mod = Module.new { def self.handle_ingest(**_); end }
+        stub_const('Legion::Extensions::Apollo::Runners', Module.new)
+        stub_const('Legion::Extensions::Apollo::Runners::Knowledge', knowledge_mod)
+        allow(knowledge_mod).to receive(:handle_ingest)
+        described_class.write_directly(payload)
+        expect(knowledge_mod).not_to have_received(:handle_ingest)
+      end
+    end
+
+    context 'when Legion::Apollo is not defined' do
+      let(:knowledge_mod) { Module.new { def self.handle_ingest(**_); end } }
+
+      before do
+        hide_const('Legion::Apollo') if defined?(Legion::Apollo)
+        stub_const('Legion::Extensions::Apollo::Runners', Module.new)
+        stub_const('Legion::Extensions::Apollo::Runners::Knowledge', knowledge_mod)
+        allow(knowledge_mod).to receive(:handle_ingest)
+      end
+
+      it 'falls back to Runners::Knowledge.handle_ingest' do
+        described_class.write_directly(payload)
+        expect(knowledge_mod).to have_received(:handle_ingest).with(**payload)
+      end
+    end
+
+    context 'when an error is raised' do
+      before do
+        stub_const('Legion::Apollo', Module.new)
+        allow(Legion::Apollo).to receive(:ingest).and_raise(StandardError, 'boom')
+        allow(described_class).to receive(:publish_to_transport)
+      end
+
+      it 'falls back to publish_to_transport' do
+        described_class.write_directly(payload)
+        expect(described_class).to have_received(:publish_to_transport)
+          .with(payload, has_embedding: true)
+      end
+    end
+  end
+
   describe '.content_hash' do
     it 'produces consistent hashes for same content' do
       hash1 = described_class.content_hash('hello world')
