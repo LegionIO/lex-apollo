@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.7] - 2026-03-25
+
+### Added
+- Knowledge capture writeback system: `Helpers::Writeback` evaluates LLM responses for Apollo ingest with echo chamber prevention
+- `Helpers::TagNormalizer` for mechanical tag normalization (aliases, special chars, max 5)
+- `Helpers::Capability` for detecting embed/write capabilities per node
+- Writeback transport layer: `Messages::Writeback`, `Queues::WritebackStore`, `Queues::WritebackVectorize`
+- Writeback subscription actors: `Actor::WritebackStore` (pre-embedded), `Actor::WritebackVectorize` (needs embedding)
+- Content hash dedup in `Runners::Knowledge#handle_ingest` — collision boosts confidence instead of inserting
+- Identity tracking: `submitted_by`, `submitted_from`, `content_hash` fields on knowledge entries
+
 ## [0.4.6] - 2026-03-25
 
 ### Added

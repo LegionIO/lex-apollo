@@ -138,7 +138,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Request do
         stub_const('Legion::Data::Model::ApolloAccessLog', mock_access_log_class)
         allow(Legion::Extensions::Apollo::Helpers::Embedding).to receive(:generate)
           .and_return(Array.new(1536, 0.0))
-        allow(mock_entry_class).to receive(:where).and_return(double(exclude: double(limit: double(each: nil))))
+        allow(mock_entry_class).to receive(:where).and_return(double(exclude: double(limit: double(each: nil), first: nil)))
         allow(mock_entry_class).to receive(:exclude)
           .and_return(double(exclude: double(limit: double(all: []))))
         allow(mock_entry_class).to receive(:db).and_return(double(fetch: double(all: [])))

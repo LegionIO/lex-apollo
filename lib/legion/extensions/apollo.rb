@@ -4,6 +4,9 @@ require 'legion/extensions/apollo/version'
 require 'legion/extensions/apollo/helpers/confidence'
 require 'legion/extensions/apollo/helpers/similarity'
 require 'legion/extensions/apollo/helpers/graph_query'
+require 'legion/extensions/apollo/helpers/tag_normalizer'
+require 'legion/extensions/apollo/helpers/capability'
+require 'legion/extensions/apollo/helpers/writeback'
 require 'legion/extensions/apollo/runners/knowledge'
 require 'legion/extensions/apollo/runners/expertise'
 require 'legion/extensions/apollo/runners/maintenance'
@@ -21,6 +24,9 @@ if defined?(Legion::Transport)
   require 'legion/extensions/apollo/transport/queues/gas'
   require 'legion/extensions/apollo/transport/messages/ingest'
   require 'legion/extensions/apollo/transport/messages/query'
+  require 'legion/extensions/apollo/transport/messages/writeback'
+  require 'legion/extensions/apollo/transport/queues/writeback_store'
+  require 'legion/extensions/apollo/transport/queues/writeback_vectorize'
 end
 
 module Legion

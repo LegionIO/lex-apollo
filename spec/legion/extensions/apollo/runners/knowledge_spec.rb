@@ -5,6 +5,8 @@ require 'legion/extensions/apollo/helpers/confidence'
 require 'legion/extensions/apollo/helpers/similarity'
 require 'legion/extensions/apollo/helpers/embedding'
 require 'legion/extensions/apollo/helpers/graph_query'
+require 'legion/extensions/apollo/helpers/tag_normalizer'
+require 'legion/extensions/apollo/helpers/writeback'
 require 'legion/extensions/apollo/runners/knowledge'
 
 RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
@@ -120,7 +122,12 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         allow(Legion::Extensions::Apollo::Helpers::Embedding).to receive(:generate)
           .and_return(Array.new(1536, 0.0))
 
+        # Corroboration lookup chain
         allow(mock_entry_class).to receive(:where).and_return(double(exclude: double(limit: empty_dataset)))
+        # Content hash dedup chain — no match by default
+        dedup_chain = double('dedup_chain')
+        allow(mock_entry_class).to receive(:where).with(content_hash: anything).and_return(dedup_chain)
+        allow(dedup_chain).to receive(:exclude).with(status: 'archived').and_return(double(first: nil))
         allow(mock_entry_class).to receive(:db).and_return(mock_db)
         allow(mock_db).to receive(:fetch).and_return(double(all: []))
         allow(mock_entry_class).to receive(:create).and_return(mock_entry)
@@ -189,6 +196,53 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
           hash_including(knowledge_domain: 'general')
         ).and_return(mock_entry)
         host.handle_ingest(content: 'test', content_type: 'fact', source_agent: 'agent-1')
+      end
+
+      it 'passes submitted_by and submitted_from to create' do
+        expect(mock_entry_class).to receive(:create).with(
+          hash_including(submitted_by: 'user@example.com', submitted_from: 'node-1')
+        ).and_return(mock_entry)
+        host.handle_ingest(content: 'test', content_type: 'fact',
+                           source_agent: 'agent-1',
+                           submitted_by: 'user@example.com',
+                           submitted_from: 'node-1')
+      end
+
+      it 'passes content_hash to create' do
+        expect(mock_entry_class).to receive(:create).with(
+          hash_including(content_hash: 'abc123')
+        ).and_return(mock_entry)
+        host.handle_ingest(content: 'test', content_type: 'fact',
+                           source_agent: 'agent-1', content_hash: 'abc123')
+      end
+
+      it 'normalizes tags before storage' do
+        expect(mock_entry_class).to receive(:create).with(
+          hash_including(tags: Sequel.pg_array(%w[rabbitmq]))
+        ).and_return(mock_entry)
+        host.handle_ingest(content: 'test', content_type: 'fact',
+                           tags: ['RabbitMQ'], source_agent: 'agent-1')
+      end
+
+      context 'content hash dedup' do
+        let(:existing_entry) do
+          double('existing', id: 'uuid-existing', confidence: 0.6,
+                             update: true)
+        end
+
+        it 'returns deduped result on hash collision with active entry' do
+          dedup_dataset = double('dataset')
+          allow(mock_entry_class).to receive(:where).with(content_hash: anything).and_return(dedup_dataset)
+          allow(dedup_dataset).to receive(:exclude).with(status: 'archived').and_return(dedup_dataset)
+          allow(dedup_dataset).to receive(:first).and_return(existing_entry)
+
+          result = host.handle_ingest(content: 'test', content_type: 'fact',
+                                      source_agent: 'agent-1',
+                                      content_hash: 'deadbeef12345678deadbeef12345678')
+          expect(result[:success]).to be true
+          expect(result[:deduped]).to be true
+          expect(result[:entry_id]).to eq('uuid-existing')
+        end
       end
     end
 
