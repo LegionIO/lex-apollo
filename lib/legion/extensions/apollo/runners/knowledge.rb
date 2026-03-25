@@ -66,9 +66,9 @@ module Legion
             hash = content_hash || (defined?(Helpers::Writeback) ? Helpers::Writeback.content_hash(content) : nil)
             if hash
               existing = Legion::Data::Model::ApolloEntry
-                .where(content_hash: hash)
-                .exclude(status: 'archived')
-                .first
+                         .where(content_hash: hash)
+                         .exclude(status: 'archived')
+                         .first
               if existing
                 existing.update(confidence: [existing.confidence + Helpers::Confidence.retrieval_boost, 1.0].min)
                 return { success: true, entry_id: existing.id, deduped: true }

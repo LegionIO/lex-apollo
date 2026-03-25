@@ -24,7 +24,7 @@ module Legion
             Legion::Logging.warn("apollo writeback failed: #{e.message}") if defined?(Legion::Logging)
           end
 
-          def should_capture?(request, response, enrichments)
+          def should_capture?(_request, response, enrichments)
             content = response_content(response)
             return false if content.nil? || content.length < min_content_length
 
@@ -86,7 +86,7 @@ module Legion
             return unless defined?(Legion::Transport)
 
             Transport::Messages::Writeback.new(
-              **payload.merge(has_embedding: has_embedding)
+              **payload, has_embedding: has_embedding
             ).publish
           rescue StandardError => e
             Legion::Logging.warn("apollo writeback publish failed: #{e.message}") if defined?(Legion::Logging)

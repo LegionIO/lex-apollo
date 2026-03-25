@@ -40,12 +40,12 @@ RSpec.describe Legion::Extensions::Apollo::Transport::Messages::Writeback do
 
   describe '#routing_key' do
     it 'routes to store when embedding present' do
-      msg = described_class.new(**base_opts.merge(has_embedding: true, embedding: [0.1] * 1024))
+      msg = described_class.new(**base_opts, has_embedding: true, embedding: [0.1] * 1024)
       expect(msg.routing_key).to eq('apollo.writeback.store')
     end
 
     it 'routes to vectorize when no embedding' do
-      msg = described_class.new(**base_opts.merge(has_embedding: false))
+      msg = described_class.new(**base_opts, has_embedding: false)
       expect(msg.routing_key).to eq('apollo.writeback.vectorize')
     end
   end
@@ -60,7 +60,7 @@ RSpec.describe Legion::Extensions::Apollo::Transport::Messages::Writeback do
     end
 
     it 'compacts nil values' do
-      msg = described_class.new(**base_opts.merge(embedding: nil, knowledge_domain: nil))
+      msg = described_class.new(**base_opts, embedding: nil, knowledge_domain: nil)
       expect(msg.message).not_to have_key(:embedding)
       expect(msg.message).not_to have_key(:knowledge_domain)
     end
@@ -75,7 +75,7 @@ RSpec.describe Legion::Extensions::Apollo::Transport::Messages::Writeback do
 
   describe '#validate' do
     it 'raises on missing content' do
-      expect { described_class.new(**base_opts.merge(content: nil)) }.to raise_error(TypeError)
+      expect { described_class.new(**base_opts, content: nil) }.to raise_error(TypeError)
     end
 
     it 'passes with valid content' do

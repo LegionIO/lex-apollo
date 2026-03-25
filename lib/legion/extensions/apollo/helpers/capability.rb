@@ -52,8 +52,8 @@ module Legion
             return @apollo_write_privilege unless @apollo_write_privilege.nil?
 
             @apollo_write_privilege = Legion::Data.connection
-              .fetch("SELECT has_table_privilege(current_user, 'apollo_entries', 'INSERT') AS can_insert")
-              .first[:can_insert] == true
+                                                  .fetch("SELECT has_table_privilege(current_user, 'apollo_entries', 'INSERT') AS can_insert")
+                                                  .first[:can_insert] == true
           rescue StandardError
             @apollo_write_privilege = false
           end

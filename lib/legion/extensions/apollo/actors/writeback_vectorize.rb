@@ -21,7 +21,7 @@ module Legion
               Runners::Knowledge.handle_ingest(**enriched)
             else
               Transport::Messages::Writeback.new(
-                **enriched.merge(has_embedding: true)
+                **enriched, has_embedding: true
               ).publish
             end
 

@@ -8,13 +8,13 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Writeback do
   let(:base_request) do
     double('Request',
            messages: [{ role: 'user', content: 'How does RabbitMQ clustering work?' }],
-           caller: { requested_by: { identity: 'user@example.com', type: :human } })
+           caller:   { requested_by: { identity: 'user@example.com', type: :human } })
   end
 
   let(:base_response) do
     double('Response',
-           message: { content: 'RabbitMQ clustering works by...' * 20 },
-           model: 'claude-sonnet-4-6',
+           message:    { content: 'RabbitMQ clustering works by...' * 20 },
+           model:      'claude-sonnet-4-6',
            tool_calls: [])
   end
 
@@ -31,8 +31,8 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Writeback do
     it 'returns true when research tools were used' do
       enrichments = { 'tool_calls' => [{ name: 'read_file' }] }
       long_response = double('Response',
-                             message: { content: 'x' * 100 },
-                             model: 'claude-sonnet-4-6',
+                             message:    { content: 'x' * 100 },
+                             model:      'claude-sonnet-4-6',
                              tool_calls: [{ name: 'read_file' }])
       expect(described_class.should_capture?(base_request, long_response, enrichments)).to be true
     end
@@ -40,7 +40,7 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Writeback do
     it 'returns false for echo chamber (apollo had results, no additional research)' do
       enrichments = {
         'rag_context:apollo_results' => { count: 3 },
-        'tool_calls' => []
+        'tool_calls'                 => []
       }
       long_response = double('Response', message: { content: 'x' * 100 }, tool_calls: [])
       expect(described_class.should_capture?(base_request, long_response, enrichments)).to be false
@@ -50,8 +50,8 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Writeback do
   describe '.build_payload' do
     it 'builds payload with identity context' do
       payload = described_class.build_payload(
-        request: base_request,
-        response: base_response,
+        request:        base_request,
+        response:       base_response,
         source_channel: 'chat'
       )
       expect(payload[:submitted_by]).to eq('user@example.com')
@@ -63,7 +63,7 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Writeback do
     it 'truncates content to max length' do
       long_response = double('Response',
                              message: { content: 'x' * 10_000 },
-                             model: 'test')
+                             model:   'test')
       payload = described_class.build_payload(request: base_request, response: long_response)
       expect(payload[:content].length).to be <= 4000
     end
@@ -76,7 +76,7 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Writeback do
 
     it 'normalizes tags' do
       payload = described_class.build_payload(request: base_request, response: base_response)
-      expect(payload[:tags]).to all(match(/\A[a-z0-9\-]+\z/))
+      expect(payload[:tags]).to all(match(/\A[a-z0-9-]+\z/))
     end
   end
 
