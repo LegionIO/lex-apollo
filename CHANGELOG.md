@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.9] - 2026-03-25
+
+### Changed
+- `Helpers::Writeback#write_directly` now routes through `Legion::Apollo.ingest` when the core library is loaded, falling back to `Runners::Knowledge.handle_ingest` for backward compatibility when it is not
+
 ## [0.4.8] - 2026-03-25
 
 ### Changed

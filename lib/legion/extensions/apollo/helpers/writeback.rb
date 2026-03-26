@@ -77,7 +77,11 @@ module Legion
           end
 
           def write_directly(payload)
-            Runners::Knowledge.handle_ingest(**payload)
+            if defined?(Legion::Apollo)
+              Legion::Apollo.ingest(**payload)
+            else
+              Runners::Knowledge.handle_ingest(**payload)
+            end
           rescue StandardError => e
             Legion::Logging.warn("apollo direct write failed, falling back to transport: #{e.message}") if defined?(Legion::Logging)
             publish_to_transport(payload, has_embedding: !payload[:embedding].nil?)
