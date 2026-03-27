@@ -25,7 +25,7 @@ module Legion
           end
 
           def json_load(str)
-            Legion::JSON.load(str)
+            ::JSON.parse(str, symbolize_names: true)
           end
 
           def relate_confidence_gate = Helpers::Confidence.apollo_setting(:gas, :relate_confidence_gate, default: RELATE_CONFIDENCE_GATE)
