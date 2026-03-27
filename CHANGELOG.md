@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.14] - 2026-03-27
+
+### Fixed
+- Replace `Legion::JSON.load` calls in `Runners::Gas` with `json_load` helper to satisfy CI Helper Migration lint
+
 ## [0.4.13] - 2026-03-27
 
 ### Changed

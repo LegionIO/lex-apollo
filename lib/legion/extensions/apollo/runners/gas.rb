@@ -24,6 +24,10 @@ module Legion
             end
           end
 
+          def json_load(str)
+            Legion::JSON.load(str)
+          end
+
           def relate_confidence_gate = Helpers::Confidence.apollo_setting(:gas, :relate_confidence_gate, default: RELATE_CONFIDENCE_GATE)
           def synthesis_confidence_cap = Helpers::Confidence.apollo_setting(:gas, :synthesis_confidence_cap, default: SYNTHESIS_CONFIDENCE_CAP)
           def max_anticipations       = Helpers::Confidence.apollo_setting(:gas, :max_anticipations, default: MAX_ANTICIPATIONS)
@@ -202,7 +206,7 @@ module Legion
             )
 
             content = result.respond_to?(:message) ? result.message[:content] : result.to_s
-            parsed = Legion::JSON.load(content)
+            parsed = json_load(content)
             rels = parsed.is_a?(Hash) ? (parsed[:relations] || parsed['relations'] || []) : []
             best = rels.max_by { |r| r[:confidence] || r['confidence'] || 0 }
 
@@ -259,7 +263,7 @@ module Legion
             )
 
             content = result.respond_to?(:message) ? result.message[:content] : result.to_s
-            parsed = Legion::JSON.load(content)
+            parsed = json_load(content)
             items = parsed.is_a?(Hash) ? (parsed[:synthesis] || parsed['synthesis'] || []) : []
 
             items.map { |item| build_synthesis_entry(item, facts) }
@@ -315,7 +319,7 @@ module Legion
             )
 
             content = result.respond_to?(:message) ? result.message[:content] : result.to_s
-            parsed = Legion::JSON.load(content)
+            parsed = json_load(content)
             questions = parsed.is_a?(Hash) ? (parsed[:questions] || parsed['questions'] || []) : []
             questions = questions.first(max_anticipations)
 
@@ -383,7 +387,7 @@ module Legion
             )
 
             content = result.respond_to?(:message) ? result.message[:content] : result.to_s
-            parsed = Legion::JSON.load(content)
+            parsed = json_load(content)
             facts_array = parsed.is_a?(Hash) ? (parsed[:facts] || parsed['facts'] || []) : Array(parsed)
             facts_array.map do |f|
               {
