@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.11] - 2026-03-27
+
+### Fixed
+- `handle_ingest`: made `content:` and `content_type:` optional with nil defaults, added `skip:` parameter for GAIA dream cycle phase wiring compatibility
+
+## [0.4.10] - 2026-03-26
+
+### Changed
+- set remote_invocable? false for local dispatch
+
 ## [0.4.9] - 2026-03-25
 
 ### Changed

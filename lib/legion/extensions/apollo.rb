@@ -33,6 +33,10 @@ module Legion
   module Extensions
     module Apollo
       extend Legion::Extensions::Core if Legion::Extensions.const_defined? :Core
+
+      def self.remote_invocable?
+        false
+      end
     end
   end
 end
