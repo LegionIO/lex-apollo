@@ -316,7 +316,8 @@ module Legion
             result = Legion::LLM::Embeddings.generate(text: text)
             vector = result.is_a?(Hash) ? result[:vector] : result
             vector.is_a?(Array) && vector.any? ? vector : Array.new(1024, 0.0)
-          rescue StandardError
+          rescue StandardError => e
+            Legion::Logging.warn("Apollo Knowledge.embed_text failed: #{e.message}") if defined?(Legion::Logging)
             Array.new(1024, 0.0)
           end
 
@@ -366,7 +367,8 @@ module Legion
               contradictions << existing[:id]
             end
             contradictions
-          rescue Sequel::Error
+          rescue Sequel::Error => e
+            Legion::Logging.warn("Apollo Knowledge.detect_contradictions failed: #{e.message}") if defined?(Legion::Logging)
             []
           end
 
@@ -382,7 +384,8 @@ module Legion
               caller:   { extension: 'lex-apollo', runner: 'knowledge' }
             )
             result[:data]&.dig(:contradicts) == true
-          rescue StandardError
+          rescue StandardError => e
+            Legion::Logging.warn("Apollo Knowledge.llm_detects_conflict? failed: #{e.message}") if defined?(Legion::Logging)
             false
           end
 

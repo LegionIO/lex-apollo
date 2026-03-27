@@ -27,7 +27,8 @@ module Legion
           def enabled?
             defined?(Legion::Extensions::Apollo::Runners::EntityExtractor) &&
               defined?(Legion::Transport)
-          rescue StandardError
+          rescue StandardError => e
+            log.warn("EntityWatchdog enabled? check failed: #{e.message}")
             false
           end
 
@@ -71,7 +72,8 @@ module Legion
                    .limit(log_limit)
                    .select_map(:message)
             logs.map(&:to_s).reject(&:empty?).uniq
-          rescue StandardError
+          rescue StandardError => e
+            log.warn("EntityWatchdog recent_task_log_texts failed: #{e.message}")
             []
           end
 
@@ -87,7 +89,8 @@ module Legion
             closest = result[:entries].first
             distance = closest[:distance].to_f
             distance <= (1.0 - dedup_similarity_threshold)
-          rescue StandardError
+          rescue StandardError => e
+            log.warn("EntityWatchdog entity_exists_in_apollo? failed: #{e.message}")
             false
           end
 

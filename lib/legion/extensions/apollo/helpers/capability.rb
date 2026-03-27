@@ -13,7 +13,8 @@ module Legion
             return false unless defined?(Legion::LLM) && Legion::LLM.started?
 
             ollama_embedding_available? || cloud_embedding_configured?
-          rescue StandardError
+          rescue StandardError => e
+            Legion::Logging.warn("Apollo Capability.can_embed? failed: #{e.message}") if defined?(Legion::Logging)
             false
           end
 
@@ -22,13 +23,15 @@ module Legion
             return false unless defined?(Legion::Data) && Legion::Data.connected?
 
             check_db_write_privilege
-          rescue StandardError
+          rescue StandardError => e
+            Legion::Logging.warn("Apollo Capability.can_write? failed: #{e.message}") if defined?(Legion::Logging)
             false
           end
 
           def apollo_write_enabled?
             Legion::Settings.dig(:data, :apollo_write) == true
-          rescue StandardError
+          rescue StandardError => e
+            Legion::Logging.warn("Apollo Capability.apollo_write_enabled? failed: #{e.message}") if defined?(Legion::Logging)
             false
           end
 
@@ -36,7 +39,8 @@ module Legion
             return false unless defined?(Legion::LLM::Discovery::Ollama)
 
             EMBEDDING_MODELS.any? { |m| Legion::LLM::Discovery::Ollama.model_available?(m) }
-          rescue StandardError
+          rescue StandardError => e
+            Legion::Logging.warn("Apollo Capability.ollama_embedding_available? failed: #{e.message}") if defined?(Legion::Logging)
             false
           end
 
@@ -44,7 +48,8 @@ module Legion
             provider = Legion::Settings.dig(:apollo, :embedding, :provider)
             model = Legion::Settings.dig(:apollo, :embedding, :model)
             !provider.nil? && !model.nil?
-          rescue StandardError
+          rescue StandardError => e
+            Legion::Logging.warn("Apollo Capability.cloud_embedding_configured? failed: #{e.message}") if defined?(Legion::Logging)
             false
           end
 
@@ -54,7 +59,8 @@ module Legion
             @apollo_write_privilege = Legion::Data.connection
                                                   .fetch("SELECT has_table_privilege(current_user, 'apollo_entries', 'INSERT') AS can_insert")
                                                   .first[:can_insert] == true
-          rescue StandardError
+          rescue StandardError => e
+            Legion::Logging.warn("Apollo Capability.check_db_write_privilege failed: #{e.message}") if defined?(Legion::Logging)
             @apollo_write_privilege = false
           end
 

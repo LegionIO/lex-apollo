@@ -34,7 +34,8 @@ module Legion
 
           def enabled?
             defined?(Legion::Transport) && Helpers::Capability.can_embed?
-          rescue StandardError
+          rescue StandardError => e
+            log.warn("WritebackVectorize enabled? check failed: #{e.message}")
             false
           end
 

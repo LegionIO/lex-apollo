@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.12] - 2026-03-27
+
+### Fixed
+- All bare `rescue` blocks in `lib/` now capture the exception as `=> e` and log `e.message` to satisfy the Rescue Logging lint rule
+
 ## [0.4.11] - 2026-03-27
 
 ### Fixed

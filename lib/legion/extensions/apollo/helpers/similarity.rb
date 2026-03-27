@@ -27,7 +27,8 @@ module Legion
             return nil unless vec.is_a?(String)
 
             ::JSON.parse(vec)
-          rescue StandardError
+          rescue StandardError => e
+            Legion::Logging.warn("Apollo Similarity.parse_vector failed: #{e.message}") if defined?(Legion::Logging)
             nil
           end
 

@@ -19,8 +19,8 @@ module Legion
             return {} if body.empty?
 
             ::JSON.parse(body, symbolize_names: true)
-          rescue ::JSON::ParserError
-            halt 400, { error: 'invalid JSON' }.to_json
+          rescue ::JSON::ParserError => e
+            halt 400, { error: "invalid JSON: #{e.message}" }.to_json
           end
 
           def runner

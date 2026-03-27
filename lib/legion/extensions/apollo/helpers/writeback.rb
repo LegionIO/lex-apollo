@@ -99,13 +99,15 @@ module Legion
 
           def writeback_enabled?
             Legion::Settings.dig(:apollo, :writeback, :enabled) != false
-          rescue StandardError
+          rescue StandardError => e
+            Legion::Logging.warn("Apollo Writeback.writeback_enabled? failed: #{e.message}") if defined?(Legion::Logging)
             true
           end
 
           def min_content_length
             Legion::Settings.dig(:apollo, :writeback, :min_content_length) || MIN_CONTENT_LENGTH
-          rescue StandardError
+          rescue StandardError => e
+            Legion::Logging.warn("Apollo Writeback.min_content_length failed: #{e.message}") if defined?(Legion::Logging)
             MIN_CONTENT_LENGTH
           end
 
@@ -125,7 +127,8 @@ module Legion
             return 'unknown' unless request.respond_to?(:caller) && request.caller.is_a?(Hash)
 
             request.caller.dig(:requested_by, :identity) || 'unknown'
-          rescue StandardError
+          rescue StandardError => e
+            Legion::Logging.warn("Apollo Writeback.extract_identity failed: #{e.message}") if defined?(Legion::Logging)
             'unknown'
           end
 
@@ -134,7 +137,8 @@ module Legion
 
             user_msgs = Array(request.messages).select { |m| m[:role] == 'user' || m['role'] == 'user' }
             (user_msgs.last || {})[:content] || ''
-          rescue StandardError
+          rescue StandardError => e
+            Legion::Logging.warn("Apollo Writeback.extract_user_query failed: #{e.message}") if defined?(Legion::Logging)
             ''
           end
 

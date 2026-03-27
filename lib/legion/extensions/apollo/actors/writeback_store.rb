@@ -16,7 +16,8 @@ module Legion
             defined?(Legion::Extensions::Apollo::Runners::Knowledge) &&
               defined?(Legion::Transport) &&
               Helpers::Capability.apollo_write_enabled?
-          rescue StandardError
+          rescue StandardError => e
+            log.warn("WritebackStore enabled? check failed: #{e.message}")
             false
           end
         end

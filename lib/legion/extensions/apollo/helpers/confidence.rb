@@ -24,7 +24,8 @@ module Legion
             return default unless defined?(Legion::Settings) && !Legion::Settings[:apollo].nil?
 
             Legion::Settings[:apollo].dig(*keys) || default
-          rescue StandardError
+          rescue StandardError => e
+            Legion::Logging.warn("Apollo Confidence.apollo_setting failed: #{e.message}") if defined?(Legion::Logging)
             default
           end
 
