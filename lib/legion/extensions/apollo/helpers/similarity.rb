@@ -9,6 +9,14 @@ module Legion
         module Similarity
           module_function
 
+          def log
+            return Legion::Logging if defined?(Legion::Logging)
+
+            @log ||= Object.new.tap do |nl|
+              %i[debug info warn error fatal].each { |m| nl.define_singleton_method(m) { |*| nil } }
+            end
+          end
+
           def cosine_similarity(vec_a:, vec_b:, **)
             vec_a = parse_vector(vec_a)
             vec_b = parse_vector(vec_b)
@@ -28,7 +36,7 @@ module Legion
 
             ::JSON.parse(vec)
           rescue StandardError => e
-            Legion::Logging.warn("Apollo Similarity.parse_vector failed: #{e.message}") if defined?(Legion::Logging)
+            log.warn("Apollo Similarity.parse_vector failed: #{e.message}")
             nil
           end
 

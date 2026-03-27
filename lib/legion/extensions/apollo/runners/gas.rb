@@ -16,6 +16,14 @@ module Legion
 
           module_function
 
+          def log
+            return Legion::Logging if defined?(Legion::Logging)
+
+            @log ||= Object.new.tap do |nl|
+              %i[debug info warn error fatal].each { |m| nl.define_singleton_method(m) { |*| nil } }
+            end
+          end
+
           def relate_confidence_gate = Helpers::Confidence.apollo_setting(:gas, :relate_confidence_gate, default: RELATE_CONFIDENCE_GATE)
           def synthesis_confidence_cap = Helpers::Confidence.apollo_setting(:gas, :synthesis_confidence_cap, default: SYNTHESIS_CONFIDENCE_CAP)
           def max_anticipations       = Helpers::Confidence.apollo_setting(:gas, :max_anticipations, default: MAX_ANTICIPATIONS)
@@ -42,7 +50,7 @@ module Legion
               anticipations:    anticipations.length
             }
           rescue StandardError => e
-            Legion::Logging.warn("GAS pipeline error: #{e.message}") if defined?(Legion::Logging)
+            log.warn("GAS pipeline error: #{e.message}")
             { phases_completed: 0, error: e.message }
           end
 
@@ -69,7 +77,7 @@ module Legion
             result = Runners::EntityExtractor.extract_entities(text: audit_event[:response_content])
             result[:success] ? (result[:entities] || []) : []
           rescue StandardError => e
-            Legion::Logging.warn("GAS phase_extract failed: #{e.message}") if defined?(Legion::Logging)
+            log.warn("GAS phase_extract failed: #{e.message}")
             []
           end
 
@@ -97,7 +105,7 @@ module Legion
 
             llm_synthesize(facts)
           rescue StandardError => e
-            Legion::Logging.warn("GAS phase_synthesize failed: #{e.message}") if defined?(Legion::Logging)
+            log.warn("GAS phase_synthesize failed: #{e.message}")
             []
           end
 
@@ -118,7 +126,7 @@ module Legion
               )
               deposited += 1
             rescue StandardError => e
-              Legion::Logging.warn("GAS deposit error: #{e.message}") if defined?(Legion::Logging)
+              log.warn("GAS deposit error: #{e.message}")
             end
             { deposited: deposited }
           end
@@ -130,7 +138,7 @@ module Legion
 
             llm_anticipate(facts)
           rescue StandardError => e
-            Legion::Logging.warn("GAS phase_anticipate failed: #{e.message}") if defined?(Legion::Logging)
+            log.warn("GAS phase_anticipate failed: #{e.message}")
             []
           end
 
@@ -142,7 +150,7 @@ module Legion
               result = Runners::Knowledge.retrieve_relevant(query: fact[:content], limit: lim, min_confidence: min_conf)
               entries.concat(result[:entries]) if result[:success] && result[:entries]&.any?
             rescue StandardError => e
-              Legion::Logging.warn("GAS fetch_similar_entries failed for fact: #{e.message}") if defined?(Legion::Logging)
+              log.warn("GAS fetch_similar_entries failed for fact: #{e.message}")
               next
             end
             entries.uniq { |e| e[:id] }
@@ -156,11 +164,11 @@ module Legion
               { from_content: fact[:content], to_id: entry[:id], relation_type: 'similar_to', confidence: fb_conf }
             end
           rescue StandardError => e
-            Legion::Logging.warn("GAS classify_relation failed: #{e.message}") if defined?(Legion::Logging)
+            log.warn("GAS classify_relation failed: #{e.message}")
             { from_content: fact[:content], to_id: entry[:id], relation_type: 'similar_to', confidence: fallback_confidence }
           end
 
-          def llm_classify_relation(fact, entry) # rubocop:disable Metrics/CyclomaticComplexity
+          def llm_classify_relation(fact, entry)
             prompt = <<~PROMPT
               Classify the relationship between these two knowledge entries.
               Valid types: #{RELATION_TYPES.join(', ')}
@@ -206,7 +214,7 @@ module Legion
 
             { from_content: fact[:content], to_id: entry[:id], relation_type: rtype, confidence: conf }
           rescue StandardError => e
-            Legion::Logging.warn("GAS llm_classify_relation failed: #{e.message}") if defined?(Legion::Logging)
+            log.warn("GAS llm_classify_relation failed: #{e.message}")
             fallback_relation(fact, entry)
           end
 
@@ -256,7 +264,7 @@ module Legion
 
             items.map { |item| build_synthesis_entry(item, facts) }
           rescue StandardError => e
-            Legion::Logging.warn("GAS llm_synthesize failed: #{e.message}") if defined?(Legion::Logging)
+            log.warn("GAS llm_synthesize failed: #{e.message}")
             []
           end
 
@@ -316,7 +324,7 @@ module Legion
               { question: q }
             end
           rescue StandardError => e
-            Legion::Logging.warn("GAS llm_anticipate failed: #{e.message}") if defined?(Legion::Logging)
+            log.warn("GAS llm_anticipate failed: #{e.message}")
             []
           end
 
@@ -329,14 +337,14 @@ module Legion
               confidence: fallback_confidence
             )
           rescue StandardError => e
-            Legion::Logging.warn("GAS promote_to_pattern_store failed: #{e.message}") if defined?(Legion::Logging)
+            log.warn("GAS promote_to_pattern_store failed: #{e.message}")
             nil
           end
 
           def llm_available?
             defined?(Legion::LLM::Pipeline::GaiaCaller)
           rescue StandardError => e
-            Legion::Logging.warn("GAS llm_available? check failed: #{e.message}") if defined?(Legion::Logging)
+            log.warn("GAS llm_available? check failed: #{e.message}")
             false
           end
 
@@ -384,7 +392,7 @@ module Legion
               }
             end
           rescue StandardError => e
-            Legion::Logging.warn("GAS llm_comprehend failed: #{e.message}") if defined?(Legion::Logging)
+            log.warn("GAS llm_comprehend failed: #{e.message}")
             mechanical_comprehend(messages, response)
           end
         end

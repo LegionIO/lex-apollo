@@ -217,7 +217,7 @@ module Legion
               redistributed += 1
             end
 
-            Legion::Logging.info("[apollo] redistributed #{redistributed} entries from departing agent=#{agent_id}") if defined?(Legion::Logging)
+            log.info("[apollo] redistributed #{redistributed} entries from departing agent=#{agent_id}")
             { success: true, redistributed: redistributed, agent_id: agent_id }
           rescue Sequel::Error => e
             { success: false, error: e.message }
@@ -317,7 +317,7 @@ module Legion
             vector = result.is_a?(Hash) ? result[:vector] : result
             vector.is_a?(Array) && vector.any? ? vector : Array.new(1024, 0.0)
           rescue StandardError => e
-            Legion::Logging.warn("Apollo Knowledge.embed_text failed: #{e.message}") if defined?(Legion::Logging)
+            log.warn("Apollo Knowledge.embed_text failed: #{e.message}")
             Array.new(1024, 0.0)
           end
 
@@ -368,7 +368,7 @@ module Legion
             end
             contradictions
           rescue Sequel::Error => e
-            Legion::Logging.warn("Apollo Knowledge.detect_contradictions failed: #{e.message}") if defined?(Legion::Logging)
+            log.warn("Apollo Knowledge.detect_contradictions failed: #{e.message}")
             []
           end
 
@@ -385,7 +385,7 @@ module Legion
             )
             result[:data]&.dig(:contradicts) == true
           rescue StandardError => e
-            Legion::Logging.warn("Apollo Knowledge.llm_detects_conflict? failed: #{e.message}") if defined?(Legion::Logging)
+            log.warn("Apollo Knowledge.llm_detects_conflict? failed: #{e.message}")
             false
           end
 

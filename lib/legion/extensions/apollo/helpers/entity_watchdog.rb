@@ -12,6 +12,14 @@ module Legion
           }.freeze
 
           class << self
+            def log
+              return Legion::Logging if defined?(Legion::Logging)
+
+              @log ||= Object.new.tap do |nl|
+                %i[debug info warn error fatal].each { |m| nl.define_singleton_method(m) { |*| nil } }
+              end
+            end
+
             def detect_entities(text:, types: nil)
               return [] if text.nil? || text.empty?
 
@@ -84,7 +92,7 @@ module Legion
             def create_candidate(entity, _source_context)
               return unless defined?(Runners::Knowledge)
 
-              Legion::Logging.debug "[entity_watchdog] candidate: #{entity[:type]}=#{entity[:value]}" if defined?(Legion::Logging)
+              log.debug "[entity_watchdog] candidate: #{entity[:type]}=#{entity[:value]}"
             end
           end
         end

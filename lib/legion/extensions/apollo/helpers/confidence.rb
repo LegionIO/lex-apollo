@@ -20,12 +20,20 @@ module Legion
 
           module_function
 
+          def log
+            return Legion::Logging if defined?(Legion::Logging)
+
+            @log ||= Object.new.tap do |nl|
+              %i[debug info warn error fatal].each { |m| nl.define_singleton_method(m) { |*| nil } }
+            end
+          end
+
           def apollo_setting(*keys, default:)
             return default unless defined?(Legion::Settings) && !Legion::Settings[:apollo].nil?
 
             Legion::Settings[:apollo].dig(*keys) || default
           rescue StandardError => e
-            Legion::Logging.warn("Apollo Confidence.apollo_setting failed: #{e.message}") if defined?(Legion::Logging)
+            log.warn("Apollo Confidence.apollo_setting failed: #{e.message}")
             default
           end
 

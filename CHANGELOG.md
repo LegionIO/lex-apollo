@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.13] - 2026-03-27
+
+### Changed
+- Replace all `Legion::Logging.xxx(...)` calls in `lib/` with `log.xxx(...)` to satisfy CI Helper Migration lint check
+- Add `log` module-function/class-method to `Runners::Gas`, `Helpers::Similarity`, `Helpers::Capability`, `Helpers::Confidence`, `Helpers::Writeback`, and `Helpers::EntityWatchdog`
+- Instance methods in `Runners::Knowledge` use `log` via existing `Helpers::Lex` include
+
 ## [0.4.12] - 2026-03-27
 
 ### Fixed
