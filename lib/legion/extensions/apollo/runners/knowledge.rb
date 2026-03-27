@@ -58,7 +58,10 @@ module Legion
             }
           end
 
-          def handle_ingest(content:, content_type:, tags: [], source_agent: 'unknown', source_provider: nil, source_channel: nil, knowledge_domain: nil, submitted_by: nil, submitted_from: nil, content_hash: nil, context: {}, **) # rubocop:disable Metrics/ParameterLists, Layout/LineLength
+          def handle_ingest(content: nil, content_type: nil, tags: [], source_agent: 'unknown', source_provider: nil, source_channel: nil, knowledge_domain: nil, submitted_by: nil, submitted_from: nil, content_hash: nil, context: {}, skip: false, **) # rubocop:disable Metrics/ParameterLists, Layout/LineLength, Metrics/PerceivedComplexity, Metrics/CyclomaticComplexity
+            return { status: :skipped } if skip
+            return { success: false, error: 'content is required' } if content.nil? || content.to_s.strip.empty?
+            return { success: false, error: 'content_type is required' } if content_type.nil?
             return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
 
             # Content hash dedup
