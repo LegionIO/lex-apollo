@@ -13,7 +13,7 @@ module Legion
             end
 
             def routing_key
-              'apollo.query'
+              'legion.apollo.query'
             end
 
             def message

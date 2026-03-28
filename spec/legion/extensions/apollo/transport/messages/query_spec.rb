@@ -44,8 +44,8 @@ RSpec.describe Legion::Extensions::Apollo::Transport::Messages::Query do
   end
 
   describe '#routing_key' do
-    it 'returns apollo.query' do
-      expect(message.routing_key).to eq('apollo.query')
+    it 'returns legion.apollo.query' do
+      expect(message.routing_key).to eq('legion.apollo.query')
     end
   end
 

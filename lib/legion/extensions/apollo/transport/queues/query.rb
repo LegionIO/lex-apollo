@@ -9,11 +9,11 @@ module Legion
         module Queues
           class QueryResponder < Legion::Transport::Queue
             def queue_name
-              'apollo.query'
+              'legion.apollo.query'
             end
 
             def queue_options
-              { manual_ack: true, durable: true, arguments: { 'x-dead-letter-exchange': 'apollo.dlx' } }
+              { manual_ack: true, durable: true, arguments: { 'x-dead-letter-exchange': 'legion.apollo.dlx' } }
             end
           end
         end

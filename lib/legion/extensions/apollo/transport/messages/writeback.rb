@@ -13,7 +13,7 @@ module Legion
             end
 
             def routing_key
-              @options[:has_embedding] ? 'apollo.writeback.store' : 'apollo.writeback.vectorize'
+              @options[:has_embedding] ? 'legion.apollo.writeback.store' : 'legion.apollo.writeback.vectorize'
             end
 
             def type

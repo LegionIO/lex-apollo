@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.15] - 2026-03-28
+
+### Changed
+- Update exchange name from `apollo` to `legion.apollo` (unified naming convention)
+- Update all queue names to use `legion.apollo.` prefix (ingest, query, writeback.store, writeback.vectorize, gas)
+- Update all DLX references from `apollo.dlx` to `legion.apollo.dlx`
+- Update all message routing keys to use `legion.apollo.` prefix
+
 ## [0.4.14] - 2026-03-27
 
 ### Fixed

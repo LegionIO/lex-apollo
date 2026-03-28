@@ -42,8 +42,8 @@ RSpec.describe Legion::Extensions::Apollo::Transport::Messages::Ingest do
   end
 
   describe '#routing_key' do
-    it 'returns apollo.ingest' do
-      expect(message.routing_key).to eq('apollo.ingest')
+    it 'returns legion.apollo.ingest' do
+      expect(message.routing_key).to eq('legion.apollo.ingest')
     end
   end
 
