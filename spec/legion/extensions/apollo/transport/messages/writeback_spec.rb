@@ -41,12 +41,12 @@ RSpec.describe Legion::Extensions::Apollo::Transport::Messages::Writeback do
   describe '#routing_key' do
     it 'routes to store when embedding present' do
       msg = described_class.new(**base_opts, has_embedding: true, embedding: [0.1] * 1024)
-      expect(msg.routing_key).to eq('apollo.writeback.store')
+      expect(msg.routing_key).to eq('legion.apollo.writeback.store')
     end
 
     it 'routes to vectorize when no embedding' do
       msg = described_class.new(**base_opts, has_embedding: false)
-      expect(msg.routing_key).to eq('apollo.writeback.vectorize')
+      expect(msg.routing_key).to eq('legion.apollo.writeback.vectorize')
     end
   end
 

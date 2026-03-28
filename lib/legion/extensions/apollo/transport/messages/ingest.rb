@@ -13,7 +13,7 @@ module Legion
             end
 
             def routing_key
-              'apollo.ingest'
+              'legion.apollo.ingest'
             end
 
             def message

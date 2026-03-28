@@ -9,7 +9,7 @@ module Legion
         module Exchanges
           class Apollo < Legion::Transport::Exchange
             def exchange_name
-              'apollo'
+              'legion.apollo'
             end
           end
         end
