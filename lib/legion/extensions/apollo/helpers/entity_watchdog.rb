@@ -13,11 +13,7 @@ module Legion
 
           class << self
             def log
-              return Legion::Logging if defined?(Legion::Logging)
-
-              @log ||= Object.new.tap do |nl|
-                %i[debug info warn error fatal].each { |m| nl.define_singleton_method(m) { |*| nil } }
-              end
+              Legion::Logging
             end
 
             def detect_entities(text:, types: nil)

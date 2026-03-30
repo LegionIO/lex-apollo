@@ -4,7 +4,7 @@ module Legion
   module Extensions
     module Apollo
       module Runners
-        module Gas
+        module Gas # rubocop:disable Legion/Extension/RunnerIncludeHelpers
           RELATION_TYPES = %w[
             similar_to contradicts depends_on causes
             part_of supersedes supports_by extends
@@ -17,11 +17,7 @@ module Legion
           module_function
 
           def log
-            return Legion::Logging if defined?(Legion::Logging)
-
-            @log ||= Object.new.tap do |nl|
-              %i[debug info warn error fatal].each { |m| nl.define_singleton_method(m) { |*| nil } }
-            end
+            Legion::Logging
           end
 
           def json_load(str)

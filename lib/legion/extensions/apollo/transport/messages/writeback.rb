@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require 'legion/transport/message' if defined?(Legion::Transport)
+require 'legion/transport/message'
 
 module Legion
   module Extensions
