@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require 'legion/transport/exchange' if defined?(Legion::Transport)
+require 'legion/transport/exchange'
 
 module Legion
   module Extensions

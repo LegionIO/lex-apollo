@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require 'legion/extensions/actors/subscription' if defined?(Legion::Extensions::Actors::Subscription)
+require 'legion/extensions/actors/subscription'
 
 module Legion
   module Extensions
@@ -12,9 +12,9 @@ module Legion
           def check_subtask?  = false
           def generate_task?  = false
 
-          def enabled?
+          def enabled? # rubocop:disable Legion/Extension/ActorEnabledSideEffects
             defined?(Legion::Extensions::Apollo::Runners::Knowledge) &&
-              defined?(Legion::Transport)
+              Legion.const_defined?(:Transport, false)
           rescue StandardError => e
             log.warn("QueryResponder enabled? check failed: #{e.message}")
             false

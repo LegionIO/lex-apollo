@@ -4,7 +4,7 @@ module Legion
   module Extensions
     module Apollo
       module Runners
-        module EntityExtractor
+        module EntityExtractor # rubocop:disable Legion/Extension/RunnerIncludeHelpers
           DEFAULT_ENTITY_TYPES = %w[person service repository concept].freeze
           DEFAULT_MIN_CONFIDENCE = 0.7
 

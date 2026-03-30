@@ -24,9 +24,9 @@ module Legion
           def check_subtask?  = false
           def generate_task?  = false
 
-          def enabled?
+          def enabled? # rubocop:disable Legion/Extension/ActorEnabledSideEffects
             defined?(Legion::Extensions::Apollo::Runners::EntityExtractor) &&
-              defined?(Legion::Transport)
+              Legion.const_defined?(:Transport, false)
           rescue StandardError => e
             log.warn("EntityWatchdog enabled? check failed: #{e.message}")
             false

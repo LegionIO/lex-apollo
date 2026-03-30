@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require 'legion/extensions/actors/subscription' if defined?(Legion::Extensions::Actors::Subscription)
+require 'legion/extensions/actors/subscription'
 
 module Legion
   module Extensions
@@ -32,8 +32,8 @@ module Legion
             { success: false, error: e.message }
           end
 
-          def enabled?
-            defined?(Legion::Transport) && Helpers::Capability.can_embed?
+          def enabled? # rubocop:disable Legion/Extension/ActorEnabledSideEffects
+            Legion.const_defined?(:Transport, false) && Helpers::Capability.can_embed?
           rescue StandardError => e
             log.warn("WritebackVectorize enabled? check failed: #{e.message}")
             false

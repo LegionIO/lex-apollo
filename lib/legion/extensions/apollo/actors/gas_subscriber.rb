@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require 'legion/extensions/actors/subscription' if defined?(Legion::Extensions::Actors::Subscription)
+require 'legion/extensions/actors/subscription'
 
 module Legion
   module Extensions
@@ -13,9 +13,9 @@ module Legion
           def generate_task?  = false
           def use_runner?     = false
 
-          def enabled?
+          def enabled? # rubocop:disable Legion/Extension/ActorEnabledSideEffects
             defined?(Legion::Extensions::Apollo::Runners::Gas) &&
-              defined?(Legion::Transport)
+              Legion.const_defined?(:Transport, false)
           rescue StandardError => e
             log.warn("GasSubscriber enabled? check failed: #{e.message}")
             false

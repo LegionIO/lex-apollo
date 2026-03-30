@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require 'legion/transport/queue' if defined?(Legion::Transport)
+require 'legion/transport/queue'
 
 module Legion
   module Extensions

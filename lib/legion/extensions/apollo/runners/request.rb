@@ -11,7 +11,7 @@ module Legion
             false
           end
 
-          def query(text:, limit: Helpers::GraphQuery.default_query_limit, min_confidence: Helpers::GraphQuery.default_query_min_confidence, tags: nil, # rubocop:disable Metrics/ParameterLists
+          def query(text:, limit: Helpers::GraphQuery.default_query_limit, min_confidence: Helpers::GraphQuery.default_query_min_confidence, tags: nil,
                     domain: nil, agent_id: 'unknown', **)
             if local_service_available?
               knowledge_host.handle_query(query: text, limit: limit, min_confidence: min_confidence,
@@ -72,7 +72,7 @@ module Legion
           end
 
           def transport_available?
-            defined?(Legion::Transport) &&
+            Legion.const_defined?(:Transport, false) &&
               Legion::Transport.respond_to?(:connected?) &&
               Legion::Transport.connected?
           end

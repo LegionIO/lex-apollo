@@ -118,7 +118,7 @@ module Legion
             { success: false, error: e.message }
           end
 
-          def handle_query(query:, limit: Helpers::GraphQuery.default_query_limit, min_confidence: Helpers::GraphQuery.default_query_min_confidence, status: [:confirmed], tags: nil, domain: nil, agent_id: 'unknown', **) # rubocop:disable Metrics/ParameterLists, Layout/LineLength
+          def handle_query(query:, limit: Helpers::GraphQuery.default_query_limit, min_confidence: Helpers::GraphQuery.default_query_min_confidence, status: [:confirmed], tags: nil, domain: nil, agent_id: 'unknown', **) # rubocop:disable Layout/LineLength
             return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
 
             embedding = embed_text(query)
@@ -223,7 +223,7 @@ module Legion
             { success: false, error: e.message }
           end
 
-          def retrieve_relevant(query: nil, limit: Helpers::Confidence.apollo_setting(:query, :retrieval_limit, default: 5), min_confidence: Helpers::GraphQuery.default_query_min_confidence, tags: nil, domain: nil, skip: false, **) # rubocop:disable Metrics/ParameterLists, Layout/LineLength
+          def retrieve_relevant(query: nil, limit: Helpers::Confidence.apollo_setting(:query, :retrieval_limit, default: 5), min_confidence: Helpers::GraphQuery.default_query_min_confidence, tags: nil, domain: nil, skip: false, **) # rubocop:disable Layout/LineLength
             return { status: :skipped } if skip
 
             return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)

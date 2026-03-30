@@ -16,8 +16,7 @@ module Legion
             tag = raw.to_s.strip.downcase
             tag = ALIASES[tag] if ALIASES.key?(tag)
             tag = tag.gsub(/[^a-z0-9\- ]/, '')
-                     .gsub(/\s+/, '-')
-                     .gsub(/-+/, '-')
+                     .gsub(/\s+/, '-').squeeze('-')
                      .sub(/^-/, '')
                      .sub(/-$/, '')
             tag.empty? ? nil : tag

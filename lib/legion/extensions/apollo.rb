@@ -16,7 +16,7 @@ require 'legion/extensions/apollo/runners/request'
 
 require 'legion/extensions/apollo/api' if defined?(Sinatra)
 
-if defined?(Legion::Transport)
+if Legion.const_defined?(:Transport, false)
   require 'legion/extensions/apollo/transport/exchanges/apollo'
   require 'legion/extensions/apollo/transport/exchanges/llm_audit'
   require 'legion/extensions/apollo/transport/queues/ingest'
@@ -32,7 +32,7 @@ end
 module Legion
   module Extensions
     module Apollo
-      extend Legion::Extensions::Core if Legion::Extensions.const_defined? :Core
+      extend Legion::Extensions::Core if Legion::Extensions.const_defined? :Core, false
 
       def self.remote_invocable?
         false

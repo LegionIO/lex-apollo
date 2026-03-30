@@ -1,59 +1,39 @@
-AllCops:
-  TargetRubyVersion: 3.4
-  NewCops: enable
-  SuggestExtensions: false
+inherit_gem:
+  rubocop-legion: config/lex.yml
 
-Layout/LineLength:
-  Max: 160
-
-Layout/SpaceAroundEqualsInParameterDefault:
-  EnforcedStyle: space
-
-Layout/HashAlignment:
-  EnforcedHashRocketStyle: table
-  EnforcedColonStyle: table
-
-Metrics/MethodLength:
-  Max: 50
-
-Metrics/ClassLength:
-  Max: 1500
-
-Metrics/ModuleLength:
-  Max: 1500
-
-Metrics/BlockLength:
-  Max: 40
-  Exclude:
-    - 'spec/**/*'
-
-Metrics/AbcSize:
-  Max: 60
-
-Metrics/ParameterLists:
-  Max: 6
-
-Metrics/CyclomaticComplexity:
-  Max: 15
-
-Metrics/PerceivedComplexity:
-  Max: 17
-
-Style/Documentation:
+# Actors use modern Ruby one-liner `def time = N` syntax which this cop does not recognize
+Legion/Extension/EveryActorRequiresTime:
   Enabled: false
 
-Style/SymbolArray:
-  Enabled: true
-
-Style/FrozenStringLiteralComment:
-  Enabled: true
-  EnforcedStyle: always
-
-Naming/FileName:
+# RunnerReturnHash fires on private helper methods that intentionally return non-Hash values
+Legion/Extension/RunnerReturnHash:
   Enabled: false
 
-Naming/PredicateMethod:
+# Files in this gem use direct Legion::* calls intentionally (no helper mixin in helpers/classes)
+Legion/HelperMigration/DirectLogging:
   Enabled: false
 
-Gemspec/DevelopmentDependencies:
+Legion/HelperMigration/OldLoggingMethods:
+  Enabled: false
+
+Legion/HelperMigration/DirectJson:
+  Enabled: false
+
+Legion/HelperMigration/DirectLlm:
+  Enabled: false
+
+Legion/HelperMigration/DirectCache:
+  Enabled: false
+
+Legion/HelperMigration/DirectData:
+  Enabled: false
+
+Legion/HelperMigration/DirectKnowledge:
+  Enabled: false
+
+# Mutable class instance variables are intentional (protected by mutex)
+ThreadSafety/MutableClassInstanceVariable:
+  Enabled: false
+
+ThreadSafety/ClassInstanceVariable:
   Enabled: false
