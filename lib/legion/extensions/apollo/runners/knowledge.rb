@@ -121,6 +121,7 @@ module Legion
           def handle_query(query:, limit: Helpers::GraphQuery.default_query_limit, min_confidence: Helpers::GraphQuery.default_query_min_confidence, status: [:confirmed], tags: nil, domain: nil, agent_id: 'unknown', **) # rubocop:disable Layout/LineLength
             return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
 
+            query = normalize_text_input(query)
             embedding = embed_text(query)
             sql = Helpers::GraphQuery.build_semantic_search_sql(
               limit: limit, min_confidence: min_confidence,
@@ -228,9 +229,10 @@ module Legion
 
             return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
 
+            query = normalize_text_input(query)
             return { success: true, entries: [], count: 0 } if query.nil? || query.to_s.strip.empty?
 
-            embedding = embed_text(query.to_s)
+            embedding = embed_text(query)
             sql = Helpers::GraphQuery.build_semantic_search_sql(
               limit: limit, min_confidence: min_confidence,
               statuses: ['confirmed'], tags: tags, domain: domain
@@ -313,12 +315,22 @@ module Legion
           private
 
           def embed_text(text)
+            text = normalize_text_input(text)
             result = Legion::LLM::Embeddings.generate(text: text)
             vector = result.is_a?(Hash) ? result[:vector] : result
             vector.is_a?(Array) && vector.any? ? vector : Array.new(1024, 0.0)
           rescue StandardError => e
             log.warn("Apollo Knowledge.embed_text failed: #{e.message}")
             Array.new(1024, 0.0)
+          end
+
+          def normalize_text_input(value)
+            return Legion::Apollo.send(:normalize_text_input, value) if defined?(Legion::Apollo) && Legion::Apollo.respond_to?(:normalize_text_input, true)
+
+            value.to_s
+          rescue StandardError => e
+            log.warn("Apollo Knowledge.normalize_text_input failed: #{e.message}")
+            value.to_s
           end
 
           def allowed_domains_for(target_domain)

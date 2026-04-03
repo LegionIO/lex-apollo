@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.17] - 2026-04-03
+
+### Changed
+- resolve rubocop Style/IfUnlessModifier offense in runners/knowledge.rb
+
 ## [0.4.16] - 2026-03-30
 
 ### Changed
