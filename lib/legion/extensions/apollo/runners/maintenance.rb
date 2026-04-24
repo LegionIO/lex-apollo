@@ -23,28 +23,37 @@ module Legion
           def run_decay_cycle(alpha: nil, min_confidence: nil, **)
             alpha ||= Helpers::Confidence.power_law_alpha
             min_confidence ||= Helpers::Confidence.decay_threshold
+            min_age_hours = Helpers::Confidence.decay_min_age_hours
 
             return { decayed: 0, archived: 0 } unless defined?(Legion::Data) && Legion::Data.respond_to?(:connection) && Legion::Data.connection
 
             conn = Legion::Data.connection
 
-            hours_expr = Sequel.lit(
-              'GREATEST(EXTRACT(EPOCH FROM (NOW() - COALESCE(updated_at, created_at))) / 3600.0, 1.0)'
+            age_days_expr = Sequel.lit(
+              'GREATEST(EXTRACT(EPOCH FROM (NOW() - COALESCE(updated_at, created_at))) / 86400.0, 1.0)'
             )
             decay_factor = Sequel.lit(
-              'POWER(CAST(? AS double precision) / (CAST(? AS double precision) + 1.0), ?)', hours_expr, hours_expr, alpha
+              'POWER(CAST(? AS double precision) / (CAST(? AS double precision) + 1.0), ?)',
+              age_days_expr, age_days_expr, alpha
+            )
+
+            min_age_filter = Sequel.lit(
+              "COALESCE(updated_at, created_at) < NOW() - INTERVAL '? hours'", min_age_hours
             )
 
             decayed = conn[:apollo_entries]
                       .exclude(status: 'archived')
+                      .where(min_age_filter)
                       .update(confidence: Sequel[:confidence] * decay_factor)
 
             archived = conn[:apollo_entries]
                        .where { confidence < min_confidence }
+                       .where(min_age_filter)
                        .exclude(status: 'archived')
                        .update(status: 'archived')
 
-            { decayed: decayed, archived: archived, alpha: alpha, threshold: min_confidence }
+            { decayed: decayed, archived: archived, alpha: alpha, threshold: min_confidence,
+              min_age_hours: min_age_hours }
           rescue Sequel::Error => e
             { decayed: 0, archived: 0, error: e.message }
           end

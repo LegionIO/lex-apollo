@@ -20,6 +20,11 @@ module Legion
               raise ArgumentError, "invalid content_type: #{content_type}. Must be one of #{Helpers::Confidence::CONTENT_TYPES}"
             end
 
+            if defined?(Legion::Data::Model::ApolloEntry)
+              return handle_ingest(content: content, content_type: content_type,
+                                   tags: Array(tags), source_agent: source_agent, context: context, **)
+            end
+
             {
               action:       :store,
               content:      content,
@@ -30,7 +35,12 @@ module Legion
             }
           end
 
-          def query_knowledge(query:, limit: Helpers::GraphQuery.default_query_limit, min_confidence: Helpers::GraphQuery.default_query_min_confidence, status: [:confirmed], tags: nil, **) # rubocop:disable Layout/LineLength
+          def query_knowledge(query:, limit: Helpers::GraphQuery.default_query_limit, min_confidence: Helpers::GraphQuery.default_query_min_confidence, status: %i[confirmed candidate], tags: nil, **) # rubocop:disable Layout/LineLength
+            if defined?(Legion::Data::Model::ApolloEntry)
+              return handle_query(query: query, limit: limit, min_confidence: min_confidence,
+                                  status: status, tags: tags, **)
+            end
+
             {
               action:         :query,
               query:          query,
@@ -42,6 +52,8 @@ module Legion
           end
 
           def related_entries(entry_id:, relation_types: nil, depth: Helpers::GraphQuery.default_depth, **)
+            return handle_traverse(entry_id: entry_id, depth: depth, relation_types: relation_types, **) if defined?(Legion::Data::Model::ApolloEntry)
+
             {
               action:         :traverse,
               entry_id:       entry_id,
@@ -235,7 +247,7 @@ module Legion
             embedding = embed_text(query)
             sql = Helpers::GraphQuery.build_semantic_search_sql(
               limit: limit, min_confidence: min_confidence,
-              statuses: ['confirmed'], tags: tags, domain: domain
+              statuses: %w[confirmed candidate], tags: tags, domain: domain
             )
 
             db = Legion::Data::Model::ApolloEntry.db

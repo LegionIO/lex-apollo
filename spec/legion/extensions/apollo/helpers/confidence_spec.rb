@@ -18,11 +18,15 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Confidence do
     end
 
     it 'defines POWER_LAW_ALPHA' do
-      expect(described_class::POWER_LAW_ALPHA).to eq(0.5)
+      expect(described_class::POWER_LAW_ALPHA).to eq(0.05)
     end
 
     it 'defines DECAY_THRESHOLD' do
-      expect(described_class::DECAY_THRESHOLD).to eq(0.1)
+      expect(described_class::DECAY_THRESHOLD).to eq(0.05)
+    end
+
+    it 'defines DECAY_MIN_AGE_HOURS' do
+      expect(described_class::DECAY_MIN_AGE_HOURS).to eq(168)
     end
 
     it 'defines CORROBORATION_SIMILARITY_THRESHOLD' do
@@ -45,12 +49,17 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Confidence do
   describe '.apply_decay' do
     it 'applies power-law decay with default alpha when no age given' do
       result = described_class.apply_decay(confidence: 1.0)
-      expected = 1.0 / (1.0 + 0.5) # ~0.6667
+      expected = 1.0 / (1.0 + 0.05) # ~0.9524
       expect(result).to be_within(0.0001).of(expected)
     end
 
-    it 'applies age-based power-law decay when age_hours is provided' do
+    it 'skips decay when age_hours is below minimum age' do
       result = described_class.apply_decay(confidence: 1.0, age_hours: 10)
+      expect(result).to eq(1.0)
+    end
+
+    it 'applies age-based power-law decay when age_hours exceeds minimum' do
+      result = described_class.apply_decay(confidence: 1.0, age_hours: 500)
       expect(result).to be > 0.0
       expect(result).to be < 1.0
     end
@@ -98,11 +107,11 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Confidence do
 
   describe '.decayed?' do
     it 'returns true when confidence below threshold' do
-      expect(described_class.decayed?(confidence: 0.05)).to be true
+      expect(described_class.decayed?(confidence: 0.01)).to be true
     end
 
     it 'returns false when confidence at or above threshold' do
-      expect(described_class.decayed?(confidence: 0.1)).to be false
+      expect(described_class.decayed?(confidence: 0.05)).to be false
     end
   end
 

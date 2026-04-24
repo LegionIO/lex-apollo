@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.18] - 2026-04-24
+
+### Fixed
+- `store_knowledge`, `query_knowledge`, `related_entries` now execute directly when PostgreSQL is available instead of returning unexecuted command hashes — MCP tool calls were returning dispatch payloads (`{action: :query, ...}`) as their result, making the knowledge base unsearchable via LLM tools
+- `query_knowledge` and `retrieve_relevant` now include `candidate` status in default search filters so newly stored entries are immediately retrievable (previously only `confirmed` entries were returned)
+
+### Changed
+- Reduce `POWER_LAW_ALPHA` from 0.5 to 0.05 — decay was compounding hourly and crushing entry confidence within a day
+- Reduce `DECAY_THRESHOLD` from 0.1 to 0.05 — entries were being archived too eagerly
+- Decay cycle now operates on age in **days** instead of hours, preventing aggressive per-cycle compounding
+- Add `DECAY_MIN_AGE_HOURS` (168h / 7 days) — entries younger than this are completely exempt from decay and archival
+- `apply_decay` Ruby helper matches the new SQL behavior (days-based, minimum age guard)
+
 ## [0.4.17] - 2026-04-03
 
 ### Changed

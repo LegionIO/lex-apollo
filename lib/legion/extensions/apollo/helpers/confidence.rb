@@ -8,12 +8,13 @@ module Legion
           INITIAL_CONFIDENCE = 0.5
           CORROBORATION_BOOST = 0.3
           RETRIEVAL_BOOST = 0.02
-          POWER_LAW_ALPHA = 0.5
-          DECAY_THRESHOLD = 0.1
+          POWER_LAW_ALPHA = 0.05
+          DECAY_THRESHOLD = 0.05
           CORROBORATION_SIMILARITY_THRESHOLD = 0.9
           WRITE_CONFIDENCE_GATE = 0.6
           WRITE_NOVELTY_GATE = 0.3
           STALE_DAYS = 90
+          DECAY_MIN_AGE_HOURS = 168
           CONTENT_TYPES = %i[fact concept procedure association observation].freeze
           STATUSES = %w[candidate confirmed disputed decayed archived].freeze
           RELATION_TYPES = %w[is_a has_a part_of causes similar_to contradicts supersedes depends_on].freeze
@@ -41,14 +42,18 @@ module Legion
           def write_confidence_gate  = apollo_setting(:confidence, :write_gate, default: WRITE_CONFIDENCE_GATE)
           def write_novelty_gate     = apollo_setting(:confidence, :novelty_gate, default: WRITE_NOVELTY_GATE)
           def stale_days             = apollo_setting(:stale_days, default: STALE_DAYS)
+          def decay_min_age_hours    = apollo_setting(:decay_min_age_hours, default: DECAY_MIN_AGE_HOURS)
 
           def corroboration_similarity_threshold
             apollo_setting(:confidence, :corroboration_similarity, default: CORROBORATION_SIMILARITY_THRESHOLD)
           end
 
           def apply_decay(confidence:, age_hours: nil, alpha: power_law_alpha, **)
+            return confidence if age_hours && age_hours < decay_min_age_hours
+
             if age_hours
-              [confidence * ((age_hours.clamp(0, Float::INFINITY) + 2.0)**(-alpha)) / ((age_hours.clamp(0, Float::INFINITY) + 1.0)**(-alpha)), 0.0].max
+              age_days = age_hours / 24.0
+              [confidence * ((age_days.clamp(1, Float::INFINITY) + 1.0)**(-alpha)) / (age_days.clamp(1, Float::INFINITY)**(-alpha)), 0.0].max
             else
               factor = 1.0 / (1.0 + alpha)
               [confidence * factor, 0.0].max

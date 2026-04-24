@@ -14,11 +14,15 @@ RSpec.describe 'Apollo Decay Cycle' do
 
   describe 'configurable decay parameters' do
     it 'returns POWER_LAW_ALPHA as default' do
-      expect(Legion::Extensions::Apollo::Helpers::Confidence.power_law_alpha).to eq(0.5)
+      expect(Legion::Extensions::Apollo::Helpers::Confidence.power_law_alpha).to eq(0.05)
     end
 
     it 'returns default decay threshold' do
-      expect(Legion::Extensions::Apollo::Helpers::Confidence.decay_threshold).to eq(0.1)
+      expect(Legion::Extensions::Apollo::Helpers::Confidence.decay_threshold).to eq(0.05)
+    end
+
+    it 'returns default decay minimum age hours' do
+      expect(Legion::Extensions::Apollo::Helpers::Confidence.decay_min_age_hours).to eq(168)
     end
   end
 end

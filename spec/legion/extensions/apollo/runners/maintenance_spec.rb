@@ -71,7 +71,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Maintenance do
 
       it 'returns alpha in result hash' do
         result = host.run_decay_cycle
-        expect(result[:alpha]).to eq(0.5)
+        expect(result[:alpha]).to eq(0.05)
         expect(result).not_to have_key(:rate)
       end
 
