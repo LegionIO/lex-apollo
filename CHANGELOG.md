@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.19] - 2026-04-24
+
+### Fixed
+- `store_knowledge` no longer rejects LLM-provided content_type values — normalizes free-form strings (`"reasoning"`, `"text"`, `"text/plain"`, `":fact"`, `"inference"`) to valid symbols via alias map with `:observation` fallback
+- `GaiaIntegration.publish_insight` now passes `:observation` instead of the domain string as content_type (was sending `"general"` or domain names which failed validation)
+- `llm_detects_conflict?` truncates content to 4000 chars before sending to LLM to prevent context overflow errors (was passing full entry content, hitting 65536-token limit)
+
 ## [0.4.18] - 2026-04-24
 
 ### Fixed

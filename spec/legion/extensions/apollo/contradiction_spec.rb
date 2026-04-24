@@ -9,6 +9,27 @@ RSpec.describe 'Apollo Contradiction Detection' do
     it 'returns false when LLM unavailable' do
       expect(knowledge.send(:llm_detects_conflict?, 'sky is blue', 'sky is red')).to be false
     end
+
+    context 'when LLM is available' do
+      let(:llm_mod) do
+        Module.new do
+          def self.respond_to?(*) = true
+          def self.structured(**) = { data: { contradicts: true } }
+        end
+      end
+
+      before { stub_const('Legion::LLM', llm_mod) }
+
+      it 'truncates content longer than CONFLICT_CHECK_MAX_CHARS' do
+        long_text = 'x' * 10_000
+        allow(llm_mod).to receive(:structured).and_return({ data: { contradicts: false } })
+        knowledge.send(:llm_detects_conflict?, long_text, long_text)
+        expect(llm_mod).to have_received(:structured) do |**kwargs|
+          user_msg = kwargs[:messages].find { |m| m[:role] == 'user' }[:content]
+          expect(user_msg.length).to be < 10_000
+        end
+      end
+    end
   end
 
   describe '#detect_contradictions' do

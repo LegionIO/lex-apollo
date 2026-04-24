@@ -15,7 +15,7 @@ module Legion
             client = Legion::Extensions::Apollo::Client.new(agent_id: agent_id)
             client.store_knowledge(
               content:      insight[:content],
-              content_type: insight[:domain] || 'general',
+              content_type: :observation,
               source_agent: agent_id,
               tags:         Array(insight[:tags])
             )

@@ -44,6 +44,20 @@ RSpec.describe Legion::Extensions::Apollo::GaiaIntegration do
       )
       expect(result).to eq({ success: true })
     end
+
+    it 'passes :observation as content_type regardless of domain' do
+      client_double = instance_double(Legion::Extensions::Apollo::Client)
+      allow(Legion::Extensions::Apollo::Client).to receive(:new).and_return(client_double)
+      allow(client_double).to receive(:store_knowledge).and_return({ success: true })
+
+      described_class.publish_insight(
+        { confidence: 0.9, novelty: 0.5, content: 'insight', domain: 'clinical' },
+        agent_id: 'test-agent'
+      )
+      expect(client_double).to have_received(:store_knowledge).with(
+        hash_including(content_type: :observation)
+      )
+    end
   end
 
   describe 'entity watchdog phase handler' do

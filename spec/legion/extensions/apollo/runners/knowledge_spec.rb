@@ -45,10 +45,41 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
       expect(result[:source_agent]).to eq('worker-1')
     end
 
-    it 'rejects invalid content_type' do
-      expect do
-        runner.store_knowledge(content: 'test', content_type: :invalid)
-      end.to raise_error(ArgumentError, /content_type/)
+    it 'falls back to :observation for unrecognized content_type' do
+      result = runner.store_knowledge(content: 'test', content_type: 'invalid_type')
+      expect(result[:content_type]).to eq(:observation)
+    end
+
+    it 'normalizes LLM-provided content_type "reasoning" to :concept' do
+      result = runner.store_knowledge(content: 'test', content_type: 'reasoning')
+      expect(result[:content_type]).to eq(:concept)
+    end
+
+    it 'normalizes "text" to :observation' do
+      result = runner.store_knowledge(content: 'test', content_type: 'text')
+      expect(result[:content_type]).to eq(:observation)
+    end
+
+    it 'normalizes "text/plain" to :observation' do
+      result = runner.store_knowledge(content: 'test', content_type: 'text/plain')
+      expect(result[:content_type]).to eq(:observation)
+    end
+
+    it 'strips leading colon from ":fact"' do
+      result = runner.store_knowledge(content: 'test', content_type: ':fact')
+      expect(result[:content_type]).to eq(:fact)
+    end
+
+    it 'normalizes "inference" to :association' do
+      result = runner.store_knowledge(content: 'test', content_type: 'inference')
+      expect(result[:content_type]).to eq(:association)
+    end
+
+    it 'accepts all valid CONTENT_TYPES unchanged' do
+      %i[fact concept procedure association observation].each do |ct|
+        result = runner.store_knowledge(content: 'test', content_type: ct)
+        expect(result[:content_type]).to eq(ct)
+      end
     end
   end
 

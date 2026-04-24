@@ -14,11 +14,16 @@ module Legion
             'general'             => :all
           }.freeze
 
+          CONTENT_TYPE_ALIASES = {
+            reasoning: :concept, analysis: :concept, explanation: :concept,
+            text: :observation, general: :observation, note: :observation, summary: :observation,
+            rule: :procedure, step: :procedure, instruction: :procedure,
+            link: :association, relation: :association, connection: :association,
+            inference: :association, implication: :association
+          }.freeze
+
           def store_knowledge(content:, content_type:, tags: [], source_agent: nil, context: {}, **)
-            content_type = content_type.to_sym
-            unless Helpers::Confidence::CONTENT_TYPES.include?(content_type)
-              raise ArgumentError, "invalid content_type: #{content_type}. Must be one of #{Helpers::Confidence::CONTENT_TYPES}"
-            end
+            content_type = normalize_content_type(content_type)
 
             if defined?(Legion::Data::Model::ApolloEntry)
               return handle_ingest(content: content, content_type: content_type,
@@ -324,7 +329,15 @@ module Legion
             { deleted: 0, redacted: 0, error: e.message }
           end
 
+          CONFLICT_CHECK_MAX_CHARS = 4000
+
           private
+
+          def normalize_content_type(raw)
+            sym = raw.to_s.delete_prefix(':').gsub(%r{[/\s]}, '_').strip.downcase.to_sym
+            sym = CONTENT_TYPE_ALIASES.fetch(sym, sym)
+            Helpers::Confidence::CONTENT_TYPES.include?(sym) ? sym : :observation
+          end
 
           def embed_text(text)
             text = normalize_text_input(text)
@@ -399,10 +412,12 @@ module Legion
           def llm_detects_conflict?(content_a, content_b)
             return false unless defined?(Legion::LLM) && Legion::LLM.respond_to?(:structured)
 
+            a = content_a.to_s[0, CONFLICT_CHECK_MAX_CHARS]
+            b = content_b.to_s[0, CONFLICT_CHECK_MAX_CHARS]
             result = Legion::LLM.structured(
               messages: [
                 { role: 'system', content: 'Do these two statements contradict each other? Return JSON.' },
-                { role: 'user', content: "A: #{content_a}\n\nB: #{content_b}" }
+                { role: 'user', content: "A: #{a}\n\nB: #{b}" }
               ],
               schema:   { type: 'object', properties: { contradicts: { type: 'boolean' } } },
               caller:   { extension: 'lex-apollo', runner: 'knowledge' }
