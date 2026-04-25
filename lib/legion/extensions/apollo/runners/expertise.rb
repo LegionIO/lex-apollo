@@ -18,50 +18,63 @@ module Legion
           end
 
           def aggregate(**)
-            return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
+            unless defined?(Legion::Data::Model::ApolloEntry)
+              log.warn('Apollo Expertise.aggregate skipped: apollo_data_not_available')
+              return { success: false, error: 'apollo_data_not_available' }
+            end
 
             entries = Legion::Data::Model::ApolloEntry
                       .select(:source_agent, :tags, :confidence)
                       .exclude(source_agent: nil)
                       .all
+            log.debug("Apollo Expertise.aggregate entries=#{entries.size}")
 
-            groups = {}
-            entries.each do |entry|
+            agent_set = Set.new
+            domain_set = Set.new
+
+            expertise_groups(entries).each_value do |group|
+              upsert_expertise_group(group)
+              agent_set << group[:agent_id]
+              domain_set << group[:domain]
+            end
+
+            { success: true, agents: agent_set.size, domains: domain_set.size }
+              .tap { |result| log.info("Apollo Expertise.aggregate agents=#{result[:agents]} domains=#{result[:domains]}") }
+          rescue Sequel::Error => e
+            handle_exception(e, level: :error, operation: 'apollo.expertise.aggregate')
+            { success: false, error: e.message }
+          end
+
+          def expertise_groups(entries)
+            entries.each_with_object({}) do |entry, groups|
               agent = entry.source_agent
               domain = entry.tags.is_a?(Array) ? (entry.tags.first || 'general') : 'general'
               key = "#{agent}:#{domain}"
               groups[key] ||= { agent_id: agent, domain: domain, confidences: [] }
               groups[key][:confidences] << entry.confidence.to_f
             end
+          end
 
-            agent_set = Set.new
-            domain_set = Set.new
+          def upsert_expertise_group(group)
+            count = group[:confidences].size
+            proficiency = expertise_proficiency(group[:confidences])
+            existing = Legion::Data::Model::ApolloExpertise
+                       .where(agent_id: group[:agent_id], domain: group[:domain]).first
 
-            groups.each_value do |group|
-              avg = group[:confidences].sum / group[:confidences].size
-              count = group[:confidences].size
-              cap = Helpers::Confidence.apollo_setting(:expertise, :proficiency_cap, default: 1.0)
-              proficiency = [avg * Math.log2(count + 1), cap].min
-
-              existing = Legion::Data::Model::ApolloExpertise
-                         .where(agent_id: group[:agent_id], domain: group[:domain]).first
-
-              if existing
-                existing.update(proficiency: proficiency, entry_count: count, last_active_at: Time.now)
-              else
-                Legion::Data::Model::ApolloExpertise.create(
-                  agent_id: group[:agent_id], domain: group[:domain],
-                  proficiency: proficiency, entry_count: count, last_active_at: Time.now
-                )
-              end
-
-              agent_set << group[:agent_id]
-              domain_set << group[:domain]
+            if existing
+              existing.update(proficiency: proficiency, entry_count: count, last_active_at: Time.now)
+            else
+              Legion::Data::Model::ApolloExpertise.create(
+                agent_id: group[:agent_id], domain: group[:domain],
+                proficiency: proficiency, entry_count: count, last_active_at: Time.now
+              )
             end
+          end
 
-            { success: true, agents: agent_set.size, domains: domain_set.size }
-          rescue Sequel::Error => e
-            { success: false, error: e.message }
+          def expertise_proficiency(confidences)
+            avg = confidences.sum / confidences.size
+            cap = Helpers::Confidence.apollo_setting(:expertise, :proficiency_cap, default: 1.0)
+            [avg * Math.log2(confidences.size + 1), cap].min
           end
 
           include Legion::Extensions::Helpers::Lex if defined?(Legion::Extensions::Helpers::Lex)

@@ -51,15 +51,17 @@ module Legion
           req = json_body
           halt 400, { error: 'query is required' }.to_json unless req[:query]
 
-          result = runner.handle_query(
+          query_options = {
             query:          req[:query],
             limit:          req[:limit] || 10,
             min_confidence: req[:min_confidence] || 0.3,
-            status:         req[:status] || [:confirmed],
             tags:           req[:tags],
             domain:         req[:domain],
             agent_id:       req[:agent_id] || 'api'
-          )
+          }
+          query_options[:status] = req[:status] if req.key?(:status)
+
+          result = runner.handle_query(**query_options)
           status result[:success] ? 200 : 500
           result.to_json
         end

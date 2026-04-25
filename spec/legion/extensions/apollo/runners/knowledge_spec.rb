@@ -263,6 +263,36 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
                            tags: ['RabbitMQ'], source_agent: 'agent-1')
       end
 
+      it 'sanitizes null bytes before storing content' do
+        expect(mock_entry_class).to receive(:create).with(
+          hash_including(content: 'helloworld')
+        ).and_return(mock_entry)
+        host.handle_ingest(content: "hello\x00world", content_type: 'fact', source_agent: 'agent-1')
+      end
+
+      it 'truncates short varchar metadata fields at the database boundary' do
+        expect(mock_entry_class).to receive(:create).with(
+          hash_including(
+            source_agent:     'a' * 50,
+            source_provider:  'p' * 50,
+            source_channel:   'c' * 100,
+            knowledge_domain: 'd' * 50,
+            submitted_by:     'u' * 255,
+            submitted_from:   'n' * 255
+          )
+        ).and_return(mock_entry)
+        host.handle_ingest(
+          content:          'test',
+          content_type:     'fact',
+          source_agent:     'a' * 60,
+          source_provider:  'p' * 60,
+          source_channel:   'c' * 120,
+          knowledge_domain: 'd' * 60,
+          submitted_by:     'u' * 300,
+          submitted_from:   'n' * 300
+        )
+      end
+
       context 'content hash dedup' do
         let(:existing_entry) do
           double('existing', id: 'uuid-existing', confidence: 0.6,
@@ -295,9 +325,16 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
       end
 
       it 'returns a structured error' do
+        allow(host).to receive(:handle_exception)
+
         result = host.handle_ingest(content: 'test', content_type: 'fact', source_agent: 'a')
         expect(result[:success]).to be false
         expect(result[:error]).to eq('connection lost')
+        expect(host).to have_received(:handle_exception).with(
+          instance_of(Sequel::Error),
+          level:     :error,
+          operation: 'apollo.knowledge.handle_ingest'
+        )
       end
     end
   end
@@ -375,6 +412,64 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         expect(result[:entries]).to eq([])
         expect(result[:count]).to eq(0)
       end
+    end
+
+    context 'when query is browse-shaped' do
+      let(:mock_entry_class) { double('ApolloEntry') }
+      let(:dataset) { double('dataset') }
+      let(:entries) do
+        [{ id: 'uuid-1', content: 'Candidate fact', content_type: 'fact',
+           confidence: 0.7, tags: ['ruby'], source_agent: 'agent-1',
+           knowledge_domain: 'general' }]
+      end
+
+      before do
+        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
+        allow(mock_entry_class).to receive(:exclude).with(status: 'archived').and_return(dataset)
+        allow(dataset).to receive(:where).and_return(dataset)
+        allow(dataset).to receive(:order).with(:created_at).and_return(dataset)
+        allow(dataset).to receive(:limit).with(50).and_return(dataset)
+        allow(dataset).to receive(:all).and_return(entries)
+      end
+
+      it 'lists recent non-archived entries without generating an embedding' do
+        expect(Legion::LLM::Embeddings).not_to receive(:generate)
+
+        result = host.handle_query(query: 'x', limit: 50)
+
+        expect(result[:success]).to be true
+        expect(result[:mode]).to eq(:browse)
+        expect(result[:count]).to eq(1)
+        expect(result[:entries].first[:content]).to eq('Candidate fact')
+        expect(dataset).not_to have_received(:where).with(status: ['confirmed'])
+      end
+
+      it 'respects an explicit confirmed status filter' do
+        host.handle_query(query: 'x', limit: 50, status: [:confirmed])
+
+        expect(dataset).to have_received(:where).with(status: ['confirmed'])
+      end
+
+      it 'applies tags and domain filters when provided' do
+        host.handle_query(query: 'x', limit: 50, tags: ['ruby'], domain: 'general')
+
+        expect(dataset).to have_received(:where).with('tags && ?')
+        expect(dataset).to have_received(:where).with(knowledge_domain: 'general')
+      end
+    end
+  end
+
+  describe '#normalize_text_input' do
+    let(:host) { Object.new.extend(described_class) }
+
+    it 'strips null bytes in the local fallback path' do
+      expect(host.send(:normalize_text_input, "hello\x00world")).to eq('helloworld')
+    end
+
+    it 'scrubs invalid UTF-8 in the local fallback path' do
+      invalid = "hello\xC3(world".dup.force_encoding(Encoding::UTF_8)
+
+      expect(host.send(:normalize_text_input, invalid)).to eq('hello(world')
     end
   end
 

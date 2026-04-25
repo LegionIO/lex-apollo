@@ -16,6 +16,7 @@ unless defined?(Sequel)
 
     def self.pg_array(arr) = arr
     def self.lit(str, *) = str
+    def self.desc(sym) = sym
     Expr = Struct.new(:value) do
       def +(other) = "#{value} + #{other}"
       def *(other) = "#{value} * #{other}"
