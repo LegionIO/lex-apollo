@@ -130,7 +130,7 @@ module Legion
             { success: true, entry_id: existing_id, status: corroborated ? 'corroborated' : 'candidate',
               corroborated: corroborated, contradictions: contradictions }
           rescue Sequel::Error => e
-            log_sequel_error('handle_ingest', e)
+            handle_exception(e, level: :error, operation: 'apollo.knowledge.handle_ingest')
             { success: false, error: e.message }
           end
 
@@ -181,7 +181,7 @@ module Legion
 
             { success: true, entries: formatted, count: formatted.size }
           rescue Sequel::Error => e
-            log_sequel_error('handle_query', e)
+            handle_exception(e, level: :error, operation: 'apollo.knowledge.handle_query')
             { success: false, error: e.message }
           end
 
@@ -212,7 +212,7 @@ module Legion
 
             { success: true, entries: formatted, count: formatted.size }
           rescue Sequel::Error => e
-            log_sequel_error('handle_traverse', e)
+            handle_exception(e, level: :error, operation: 'apollo.knowledge.handle_traverse')
             { success: false, error: e.message }
           end
 
@@ -246,7 +246,7 @@ module Legion
             log.info("[apollo] redistributed #{redistributed} entries from departing agent=#{agent_id}")
             { success: true, redistributed: redistributed, agent_id: agent_id }
           rescue Sequel::Error => e
-            log_sequel_error('redistribute_knowledge', e)
+            handle_exception(e, level: :error, operation: 'apollo.knowledge.redistribute_knowledge')
             { success: false, error: e.message }
           end
 
@@ -284,7 +284,7 @@ module Legion
 
             { success: true, entries: formatted, count: formatted.size }
           rescue Sequel::Error => e
-            log_sequel_error('retrieve_relevant', e)
+            handle_exception(e, level: :error, operation: 'apollo.knowledge.retrieve_relevant')
             { success: false, error: e.message }
           end
 
@@ -313,7 +313,7 @@ module Legion
 
             { success: true, entries: formatted, count: formatted.size, target_domain: target_domain }
           rescue Sequel::Error => e
-            log_sequel_error('prepare_mesh_export', e)
+            handle_exception(e, level: :error, operation: 'apollo.knowledge.prepare_mesh_export')
             { success: false, error: e.message }
           end
 
@@ -337,7 +337,7 @@ module Legion
 
             { deleted: deleted, redacted: redacted, agent_id: agent_id }
           rescue Sequel::Error => e
-            log_sequel_error('handle_erasure_request', e)
+            handle_exception(e, level: :error, operation: 'apollo.knowledge.handle_erasure_request')
             { deleted: 0, redacted: 0, error: e.message }
           end
 
@@ -428,7 +428,7 @@ module Legion
             end
             { success: true, mode: :browse, query: query, entries: entries, count: entries.size }
           rescue Sequel::Error => e
-            log_sequel_error('list_entries_chronologically', e)
+            handle_exception(e, level: :error, operation: 'apollo.knowledge.list_entries_chronologically')
             { success: false, error: e.message }
           end
 
@@ -437,11 +437,6 @@ module Legion
               confidence: entry[:confidence], distance: entry[:distance]&.to_f,
               tags: entry[:tags], source_agent: entry[:source_agent],
               knowledge_domain: entry[:knowledge_domain] }
-          end
-
-          def log_sequel_error(context, error)
-            log.error("Apollo Knowledge.#{context} Sequel error: #{error.class}: #{error.message}")
-            Array(error.backtrace).first(10).each { |frame| log.error("  #{frame}") }
           end
 
           def allowed_domains_for(target_domain)
@@ -491,7 +486,7 @@ module Legion
             end
             contradictions
           rescue Sequel::Error => e
-            log_sequel_error('detect_contradictions', e)
+            handle_exception(e, level: :error, operation: 'apollo.knowledge.detect_contradictions')
             []
           end
 

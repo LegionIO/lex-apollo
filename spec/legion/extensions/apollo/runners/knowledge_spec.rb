@@ -325,13 +325,16 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
       end
 
       it 'returns a structured error' do
-        logger = double('logger', error: nil)
-        allow(host).to receive(:log).and_return(logger)
+        allow(host).to receive(:handle_exception)
 
         result = host.handle_ingest(content: 'test', content_type: 'fact', source_agent: 'a')
         expect(result[:success]).to be false
         expect(result[:error]).to eq('connection lost')
-        expect(logger).to have_received(:error).with(/Apollo Knowledge\.handle_ingest Sequel error: Sequel::Error: connection lost/)
+        expect(host).to have_received(:handle_exception).with(
+          instance_of(Sequel::Error),
+          level:     :error,
+          operation: 'apollo.knowledge.handle_ingest'
+        )
       end
     end
   end
