@@ -7,6 +7,7 @@
 - `Knowledge#handle_ingest` now truncates short metadata fields to schema-safe lengths before writing entries.
 - `Knowledge#handle_query` now treats very short queries as browse/list requests, returning recent non-archived entries without embedding noise while preserving explicit status filters.
 - `Knowledge` Sequel rescue paths now log exception class, message, and a short backtrace before returning structured errors.
+- Apollo runners and actors now emit debug/info lifecycle logs around ingest, query, browse, maintenance, expertise, entity extraction, writeback vectorization, entity watchdog, and GAS pipeline paths so debug-level logging can trace workflows end to end.
 
 ## [0.4.19] - 2026-04-24
 

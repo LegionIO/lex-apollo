@@ -26,6 +26,7 @@ module Legion
 
           def store_knowledge(content:, content_type:, tags: [], source_agent: nil, context: {}, **)
             content_type = normalize_content_type(content_type)
+            log.debug("Apollo Knowledge.store_knowledge content_type=#{content_type} tags=#{Array(tags).size} source_agent=#{source_agent || 'nil'} data_available=#{defined?(Legion::Data::Model::ApolloEntry) ? true : false}") # rubocop:disable Layout/LineLength
 
             if defined?(Legion::Data::Model::ApolloEntry)
               return handle_ingest(content: content, content_type: content_type,
@@ -43,6 +44,7 @@ module Legion
           end
 
           def query_knowledge(query:, limit: Helpers::GraphQuery.default_query_limit, min_confidence: Helpers::GraphQuery.default_query_min_confidence, status: %i[confirmed candidate], tags: nil, **) # rubocop:disable Layout/LineLength
+            log.debug("Apollo Knowledge.query_knowledge query_length=#{query.to_s.length} limit=#{limit} statuses=#{Array(status).join(',')} tags=#{Array(tags).size} data_available=#{defined?(Legion::Data::Model::ApolloEntry) ? true : false}") # rubocop:disable Layout/LineLength
             if defined?(Legion::Data::Model::ApolloEntry)
               return handle_query(query: query, limit: limit, min_confidence: min_confidence,
                                   status: status, tags: tags, **)
@@ -59,6 +61,7 @@ module Legion
           end
 
           def related_entries(entry_id:, relation_types: nil, depth: Helpers::GraphQuery.default_depth, **)
+            log.debug("Apollo Knowledge.related_entries entry_id=#{entry_id} depth=#{depth} relation_types=#{Array(relation_types).join(',')} data_available=#{defined?(Legion::Data::Model::ApolloEntry) ? true : false}") # rubocop:disable Layout/LineLength
             return handle_traverse(entry_id: entry_id, depth: depth, relation_types: relation_types, **) if defined?(Legion::Data::Model::ApolloEntry)
 
             {
@@ -81,13 +84,17 @@ module Legion
             return { status: :skipped } if skip
 
             content = normalize_text_input(content)
+            log.debug("Apollo Knowledge.handle_ingest content_length=#{content.length} content_type=#{content_type} tags=#{Array(tags).size} source_agent=#{source_agent} source_channel=#{source_channel || 'nil'}") # rubocop:disable Layout/LineLength
             return { success: false, error: 'content is required' } if content.strip.empty?
             return { success: false, error: 'content_type is required' } if content_type.nil?
             return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
 
             hash = content_hash || (defined?(Helpers::Writeback) ? Helpers::Writeback.content_hash(content) : nil)
             existing = active_duplicate_for_hash(hash)
-            return { success: true, entry_id: existing.id, deduped: true } if existing
+            if existing
+              log.info("Apollo Knowledge.handle_ingest deduped entry_id=#{existing.id} source_agent=#{source_agent}")
+              return { success: true, entry_id: existing.id, deduped: true }
+            end
 
             embedding = embed_text(content)
             content_type_sym = content_type.to_s
@@ -99,24 +106,13 @@ module Legion
               embedding, content_type_sym, metadata[:source_agent], metadata[:source_channel]
             )
 
-            unless corroborated
-              new_entry = Legion::Data::Model::ApolloEntry.create(
-                content:          content,
-                content_type:     content_type_sym,
-                confidence:       Helpers::Confidence.initial_confidence,
-                source_agent:     metadata[:source_agent],
-                source_provider:  metadata[:source_provider],
-                source_channel:   metadata[:source_channel],
-                source_context:   ::JSON.dump(context.is_a?(Hash) ? context : {}),
-                tags:             Sequel.pg_array(metadata[:tags]),
-                status:           'candidate',
-                knowledge_domain: metadata[:domain],
-                submitted_by:     metadata[:submitted_by],
-                submitted_from:   metadata[:submitted_from],
-                content_hash:     hash,
-                embedding:        Sequel.lit("'[#{embedding.join(',')}]'::vector")
+            if corroborated
+              log.info("Apollo Knowledge.handle_ingest corroborated entry_id=#{existing_id} source_agent=#{metadata[:source_agent]}")
+            else
+              existing_id = create_candidate_entry(
+                content: content, content_type: content_type_sym, context: context,
+                metadata: metadata, content_hash: hash, embedding: embedding
               )
-              existing_id = new_entry.id
             end
 
             upsert_expertise(source_agent: metadata[:source_agent], domain: metadata[:domain])
@@ -126,6 +122,7 @@ module Legion
             )
 
             contradictions = detect_contradictions(existing_id, embedding, content)
+            log.debug("Apollo Knowledge.handle_ingest complete entry_id=#{existing_id} corroborated=#{corroborated} contradictions=#{contradictions.size}")
 
             { success: true, entry_id: existing_id, status: corroborated ? 'corroborated' : 'candidate',
               corroborated: corroborated, contradictions: contradictions }
@@ -140,6 +137,7 @@ module Legion
             query = normalize_text_input(query)
             status_defaulted = status.equal?(UNSET)
             requested_status = status_defaulted ? DEFAULT_QUERY_STATUS : status
+            log.debug("Apollo Knowledge.handle_query mode=#{browse_query?(query) ? 'browse' : 'semantic'} query_length=#{query.length} limit=#{limit} statuses=#{Array(requested_status).join(',')} status_defaulted=#{status_defaulted} tags=#{Array(tags).size} domain=#{domain || 'nil'} agent_id=#{agent_id}") # rubocop:disable Layout/LineLength
             if browse_query?(query)
               return list_entries_chronologically(query: query, limit: limit, status: requested_status,
                                                   status_defaulted: status_defaulted, tags: tags, domain: domain)
@@ -179,6 +177,7 @@ module Legion
                 knowledge_domain: entry[:knowledge_domain] }
             end
 
+            log.info("Apollo Knowledge.handle_query results=#{formatted.size} mode=semantic agent_id=#{agent_id}")
             { success: true, entries: formatted, count: formatted.size }
           rescue Sequel::Error => e
             handle_exception(e, level: :error, operation: 'apollo.knowledge.handle_query')
@@ -188,6 +187,7 @@ module Legion
           def handle_traverse(entry_id:, depth: Helpers::GraphQuery.default_depth, relation_types: nil, agent_id: 'unknown', **)
             return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
 
+            log.debug("Apollo Knowledge.handle_traverse entry_id=#{entry_id} depth=#{depth} relation_types=#{Array(relation_types).join(',')} agent_id=#{agent_id}") # rubocop:disable Layout/LineLength
             # Whitelist relation_types to prevent SQL injection (they are string-interpolated in build_traversal_sql)
             if relation_types
               allowed = Helpers::Confidence::RELATION_TYPES
@@ -210,6 +210,7 @@ module Legion
                 depth: entry[:depth], activation: entry[:activation] }
             end
 
+            log.info("Apollo Knowledge.handle_traverse results=#{formatted.size} entry_id=#{entry_id}")
             { success: true, entries: formatted, count: formatted.size }
           rescue Sequel::Error => e
             handle_exception(e, level: :error, operation: 'apollo.knowledge.handle_traverse')
@@ -219,6 +220,7 @@ module Legion
           def redistribute_knowledge(agent_id:, min_confidence: Helpers::Confidence.apollo_setting(:query, :redistribute_min_confidence, default: 0.5), **)
             return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
 
+            log.debug("Apollo Knowledge.redistribute_knowledge agent_id=#{agent_id} min_confidence=#{min_confidence}")
             entries = Legion::Data::Model::ApolloEntry
                       .where(source_agent: agent_id, status: 'confirmed')
                       .where { confidence > min_confidence }
@@ -256,6 +258,7 @@ module Legion
             return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
 
             query = normalize_text_input(query)
+            log.debug("Apollo Knowledge.retrieve_relevant query_length=#{query.length} limit=#{limit} min_confidence=#{min_confidence} tags=#{Array(tags).size} domain=#{domain || 'nil'}") # rubocop:disable Layout/LineLength
             return { success: true, entries: [], count: 0 } if query.nil? || query.to_s.strip.empty?
 
             embedding = embed_text(query)
@@ -282,6 +285,7 @@ module Legion
                 knowledge_domain: entry[:knowledge_domain] }
             end
 
+            log.info("Apollo Knowledge.retrieve_relevant results=#{formatted.size} limit=#{limit}")
             { success: true, entries: formatted, count: formatted.size }
           rescue Sequel::Error => e
             handle_exception(e, level: :error, operation: 'apollo.knowledge.retrieve_relevant')
@@ -293,6 +297,7 @@ module Legion
               return { success: false, error: 'apollo_data_not_available' }
             end
 
+            log.debug("Apollo Knowledge.prepare_mesh_export target_domain=#{target_domain} min_confidence=#{min_confidence} limit=#{limit}")
             conn = Legion::Data.connection
             allowed = allowed_domains_for(target_domain)
 
@@ -312,6 +317,7 @@ module Legion
             end
 
             { success: true, entries: formatted, count: formatted.size, target_domain: target_domain }
+              .tap { |result| log.info("Apollo Knowledge.prepare_mesh_export results=#{result[:count]} target_domain=#{target_domain}") }
           rescue Sequel::Error => e
             handle_exception(e, level: :error, operation: 'apollo.knowledge.prepare_mesh_export')
             { success: false, error: e.message }
@@ -322,6 +328,7 @@ module Legion
               return { deleted: 0, redacted: 0, error: 'apollo_data_not_available' }
             end
 
+            log.warn("Apollo Knowledge.handle_erasure_request agent_id=#{agent_id}")
             conn = Legion::Data.connection
 
             # Delete entries solely from dead agent (not confirmed by others)
@@ -336,6 +343,7 @@ module Legion
                        .update(source_agent: 'redacted', source_provider: nil, source_channel: nil)
 
             { deleted: deleted, redacted: redacted, agent_id: agent_id }
+              .tap { |result| log.info("Apollo Knowledge.handle_erasure_request deleted=#{result[:deleted]} redacted=#{result[:redacted]} agent_id=#{agent_id}") } # rubocop:disable Layout/LineLength
           rescue Sequel::Error => e
             handle_exception(e, level: :error, operation: 'apollo.knowledge.handle_erasure_request')
             { deleted: 0, redacted: 0, error: e.message }
@@ -353,9 +361,16 @@ module Legion
 
           def embed_text(text)
             text = normalize_text_input(text)
+            log.debug("Apollo Knowledge.embed_text text_length=#{text.length}")
             result = Legion::LLM::Embeddings.generate(text: text)
             vector = result.is_a?(Hash) ? result[:vector] : result
-            vector.is_a?(Array) && vector.any? ? vector : Array.new(1024, 0.0)
+            if vector.is_a?(Array) && vector.any?
+              log.debug("Apollo Knowledge.embed_text vector_dimensions=#{vector.length}")
+              vector
+            else
+              log.warn('Apollo Knowledge.embed_text returned no vector; using zero-vector fallback')
+              Array.new(1024, 0.0)
+            end
           rescue StandardError => e
             log.warn("Apollo Knowledge.embed_text failed: #{e.message}")
             Array.new(1024, 0.0)
@@ -378,8 +393,11 @@ module Legion
             return value unless value.is_a?(String)
 
             string = value.encoding == Encoding::UTF_8 ? value.dup : value.dup.force_encoding(Encoding::UTF_8)
+            changed = string.include?("\x00") || !string.valid_encoding?
             string = string.scrub('') unless string.valid_encoding?
-            string.delete("\x00")
+            sanitized = string.delete("\x00")
+            log.debug("Apollo Knowledge.sanitize_for_postgres sanitized original_length=#{value.bytesize} sanitized_length=#{sanitized.bytesize}") if changed
+            sanitized
           end
 
           def truncate_for_column(value, max_length)
@@ -396,6 +414,7 @@ module Legion
                        .exclude(status: 'archived')
                        .first
             existing&.update(confidence: [existing.confidence + Helpers::Confidence.retrieval_boost, 1.0].min)
+            log.debug("Apollo Knowledge.active_duplicate_for_hash matched entry_id=#{existing.id}") if existing
             existing
           end
 
@@ -412,11 +431,33 @@ module Legion
               submitted_from:  truncate_for_column(submitted_from, 255) }
           end
 
+          def create_candidate_entry(content:, content_type:, context:, metadata:, content_hash:, embedding:)
+            new_entry = Legion::Data::Model::ApolloEntry.create(
+              content:          content,
+              content_type:     content_type,
+              confidence:       Helpers::Confidence.initial_confidence,
+              source_agent:     metadata[:source_agent],
+              source_provider:  metadata[:source_provider],
+              source_channel:   metadata[:source_channel],
+              source_context:   ::JSON.dump(context.is_a?(Hash) ? context : {}),
+              tags:             Sequel.pg_array(metadata[:tags]),
+              status:           'candidate',
+              knowledge_domain: metadata[:domain],
+              submitted_by:     metadata[:submitted_by],
+              submitted_from:   metadata[:submitted_from],
+              content_hash:     content_hash,
+              embedding:        Sequel.lit("'[#{embedding.join(',')}]'::vector")
+            )
+            log.info("Apollo Knowledge.handle_ingest created entry_id=#{new_entry.id} status=candidate domain=#{metadata[:domain]} source_agent=#{metadata[:source_agent]}") # rubocop:disable Layout/LineLength
+            new_entry.id
+          end
+
           def browse_query?(query)
             query.to_s.strip.length < 3
           end
 
           def list_entries_chronologically(query:, limit:, status:, status_defaulted:, tags:, domain:)
+            log.debug("Apollo Knowledge.list_entries_chronologically limit=#{limit} statuses=#{Array(status).join(',')} status_defaulted=#{status_defaulted} tags=#{Array(tags).size} domain=#{domain || 'nil'}") # rubocop:disable Layout/LineLength
             dataset = Legion::Data::Model::ApolloEntry.exclude(status: 'archived')
             requested = Array(status).map(&:to_s).reject(&:empty?)
             dataset = dataset.where(status: requested) unless status_defaulted || requested.empty?
@@ -426,6 +467,7 @@ module Legion
             entries = dataset.order(Sequel.desc(:created_at)).limit(limit).all.map do |entry|
               format_entry(entry.is_a?(Hash) ? entry : entry.values)
             end
+            log.info("Apollo Knowledge.list_entries_chronologically results=#{entries.size}")
             { success: true, mode: :browse, query: query, entries: entries, count: entries.size }
           rescue Sequel::Error => e
             handle_exception(e, level: :error, operation: 'apollo.knowledge.list_entries_chronologically')
@@ -460,6 +502,7 @@ module Legion
             rel_weight = Helpers::Confidence.apollo_setting(:contradiction, :relation_weight, default: 0.8)
 
             db = Legion::Data::Model::ApolloEntry.db
+            log.debug("Apollo Knowledge.detect_contradictions entry_id=#{entry_id} similar_limit=#{sim_limit} threshold=#{sim_threshold}")
             similar = db.fetch(
               "SELECT id, content, embedding FROM apollo_entries WHERE id != :entry_id AND embedding IS NOT NULL ORDER BY embedding <=> :embedding LIMIT #{sim_limit}", # rubocop:disable Layout/LineLength
               entry_id:  entry_id,
@@ -484,6 +527,7 @@ module Legion
               Legion::Data::Model::ApolloEntry.where(id: [entry_id, existing[:id]]).update(status: 'disputed')
               contradictions << existing[:id]
             end
+            log.info("Apollo Knowledge.detect_contradictions entry_id=#{entry_id} contradictions=#{contradictions.size}") if contradictions.any?
             contradictions
           rescue Sequel::Error => e
             handle_exception(e, level: :error, operation: 'apollo.knowledge.detect_contradictions')
@@ -511,6 +555,7 @@ module Legion
 
           def find_corroboration(embedding, content_type_sym, source_agent, source_channel = nil)
             scan_limit = Helpers::Confidence.apollo_setting(:corroboration, :scan_limit, default: 50)
+            log.debug("Apollo Knowledge.find_corroboration content_type=#{content_type_sym} source_agent=#{source_agent} source_channel=#{source_channel || 'nil'} scan_limit=#{scan_limit}") # rubocop:disable Layout/LineLength
             existing = Legion::Data::Model::ApolloEntry
                        .where(content_type: content_type_sym)
                        .exclude(embedding: nil)
@@ -543,9 +588,11 @@ module Legion
                 source_agent:  source_agent,
                 weight:        sim
               )
+              log.info("Apollo Knowledge.find_corroboration matched entry_id=#{entry.id} source_agent=#{source_agent} similarity=#{sim}")
               return [true, entry.id]
             end
 
+            log.debug("Apollo Knowledge.find_corroboration no_match source_agent=#{source_agent}")
             [false, nil]
           end
 
@@ -564,6 +611,7 @@ module Legion
           end
 
           def upsert_expertise(source_agent:, domain:)
+            log.debug("Apollo Knowledge.upsert_expertise source_agent=#{source_agent} domain=#{domain}")
             expertise = Legion::Data::Model::ApolloExpertise
                         .where(agent_id: source_agent, domain: domain).first
             if expertise

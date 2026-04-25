@@ -14,21 +14,27 @@ module Legion
 
           def handle_vectorize(payload)
             payload = symbolize(payload)
+            log.debug("WritebackVectorize handle_vectorize content_length=#{payload[:content].to_s.length} content_type=#{payload[:content_type] || 'nil'}")
             result = Legion::LLM::Embeddings.generate(text: payload[:content])
             vector = result.is_a?(Hash) ? result[:vector] : result
             embedding = vector.is_a?(Array) && vector.any? ? vector : Array.new(1024, 0.0)
+            log.debug("WritebackVectorize embedding_dimensions=#{embedding.length} vector_generated=#{vector.is_a?(Array) && vector.any?}")
             enriched = payload.merge(embedding: embedding)
 
             if Helpers::Capability.can_write?
+              log.debug('WritebackVectorize route=direct_ingest')
               Runners::Knowledge.handle_ingest(**enriched)
             else
+              log.debug('WritebackVectorize route=transport_writeback')
               Transport::Messages::Writeback.new(
                 **enriched, has_embedding: true
               ).publish
             end
 
+            log.info('WritebackVectorize completed action=vectorized')
             { success: true, action: :vectorized }
           rescue StandardError => e
+            handle_exception(e, level: :error, operation: 'apollo.writeback_vectorize.handle_vectorize')
             { success: false, error: e.message }
           end
 

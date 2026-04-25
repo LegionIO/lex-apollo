@@ -25,7 +25,11 @@ module Legion
             min_confidence ||= Helpers::Confidence.decay_threshold
             min_age_hours = Helpers::Confidence.decay_min_age_hours
 
-            return { decayed: 0, archived: 0 } unless defined?(Legion::Data) && Legion::Data.respond_to?(:connection) && Legion::Data.connection
+            log.debug("Apollo Maintenance.run_decay_cycle alpha=#{alpha} min_confidence=#{min_confidence} min_age_hours=#{min_age_hours}")
+            unless defined?(Legion::Data) && Legion::Data.respond_to?(:connection) && Legion::Data.connection
+              log.warn('Apollo Maintenance.run_decay_cycle skipped: apollo_data_not_available')
+              return { decayed: 0, archived: 0 }
+            end
 
             conn = Legion::Data.connection
 
@@ -54,15 +58,21 @@ module Legion
 
             { decayed: decayed, archived: archived, alpha: alpha, threshold: min_confidence,
               min_age_hours: min_age_hours }
+              .tap { |result| log.info("Apollo Maintenance.run_decay_cycle decayed=#{result[:decayed]} archived=#{result[:archived]} alpha=#{alpha} threshold=#{min_confidence}") } # rubocop:disable Layout/LineLength
           rescue Sequel::Error => e
+            handle_exception(e, level: :error, operation: 'apollo.maintenance.run_decay_cycle')
             { decayed: 0, archived: 0, error: e.message }
           end
 
           def check_corroboration(**) # rubocop:disable Metrics/CyclomaticComplexity
-            return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
+            unless defined?(Legion::Data::Model::ApolloEntry)
+              log.warn('Apollo Maintenance.check_corroboration skipped: apollo_data_not_available')
+              return { success: false, error: 'apollo_data_not_available' }
+            end
 
             candidates = Legion::Data::Model::ApolloEntry.where(status: 'candidate').exclude(embedding: nil).all
             confirmed = Legion::Data::Model::ApolloEntry.where(status: 'confirmed').exclude(embedding: nil).all
+            log.debug("Apollo Maintenance.check_corroboration candidates=#{candidates.size} confirmed=#{confirmed.size}")
 
             promoted = 0
 
@@ -106,7 +116,9 @@ module Legion
             end
 
             { success: true, promoted: promoted, scanned: candidates.size }
+              .tap { |result| log.info("Apollo Maintenance.check_corroboration scanned=#{result[:scanned]} promoted=#{result[:promoted]}") }
           rescue Sequel::Error => e
+            handle_exception(e, level: :error, operation: 'apollo.maintenance.check_corroboration')
             { success: false, error: e.message }
           end
 

@@ -4,7 +4,10 @@ module Legion
   module Extensions
     module Apollo
       module Runners
-        module Gas # rubocop:disable Legion/Extension/RunnerIncludeHelpers
+        module Gas
+          include Legion::Extensions::Helpers::Lex if defined?(Legion::Extensions::Helpers::Lex)
+          extend Legion::Extensions::Helpers::Lex if defined?(Legion::Extensions::Helpers::Lex)
+
           RELATION_TYPES = %w[
             similar_to contradicts depends_on causes
             part_of supersedes supports_by extends
@@ -15,10 +18,6 @@ module Legion
           MAX_ANTICIPATIONS = 3
 
           module_function
-
-          def log
-            Legion::Logging
-          end
 
           def json_load(str)
             ::JSON.parse(str, symbolize_names: true)
@@ -31,7 +30,12 @@ module Legion
           def fallback_confidence     = Helpers::Confidence.apollo_setting(:gas, :fallback_confidence, default: 0.5)
 
           def process(audit_event)
-            return { phases_completed: 0, reason: 'no content' } unless processable?(audit_event)
+            unless processable?(audit_event)
+              log.debug('GAS process skipped reason=no_content')
+              return { phases_completed: 0, reason: 'no content' }
+            end
+
+            log.debug("GAS process start request_id=#{audit_event[:request_id] || 'nil'} messages=#{Array(audit_event[:messages]).size} response_length=#{audit_event[:response_content].to_s.length}") # rubocop:disable Layout/LineLength
 
             facts = phase_comprehend(audit_event)
             entities = phase_extract(audit_event, facts)
@@ -40,7 +44,7 @@ module Legion
             deposit_result = phase_deposit(facts, entities, relations, synthesis, audit_event)
             anticipations = phase_anticipate(facts, synthesis)
 
-            {
+            result = {
               phases_completed: 6,
               facts:            facts.length,
               entities:         entities.length,
@@ -49,8 +53,10 @@ module Legion
               deposited:        deposit_result,
               anticipations:    anticipations.length
             }
+            log.info("GAS process complete facts=#{result[:facts]} entities=#{result[:entities]} relations=#{result[:relations]} synthesis=#{result[:synthesis]} anticipations=#{result[:anticipations]}") # rubocop:disable Layout/LineLength
+            result
           rescue StandardError => e
-            log.warn("GAS pipeline error: #{e.message}")
+            log.error("GAS pipeline error: #{e.message}")
             { phases_completed: 0, error: e.message }
           end
 
@@ -63,19 +69,24 @@ module Legion
             messages = audit_event[:messages]
             response = audit_event[:response_content]
 
-            if llm_available?
-              llm_comprehend(messages, response)
-            else
-              mechanical_comprehend(messages, response)
-            end
+            mode = llm_available? ? :llm : :mechanical
+            log.debug("GAS phase_comprehend mode=#{mode} messages=#{Array(messages).size} response_length=#{response.to_s.length}")
+            facts = mode == :llm ? llm_comprehend(messages, response) : mechanical_comprehend(messages, response)
+            log.debug("GAS phase_comprehend facts=#{facts.size}")
+            facts
           end
 
           # Phase 2: Extract - entity extraction (delegates to existing EntityExtractor)
           def phase_extract(audit_event, _facts)
-            return [] unless defined?(Runners::EntityExtractor)
+            unless defined?(Runners::EntityExtractor)
+              log.debug('GAS phase_extract skipped reason=entity_extractor_unavailable')
+              return []
+            end
 
             result = Runners::EntityExtractor.extract_entities(text: audit_event[:response_content])
-            result[:success] ? (result[:entities] || []) : []
+            entities = result[:success] ? (result[:entities] || []) : []
+            log.debug("GAS phase_extract success=#{result[:success]} entities=#{entities.size}")
+            entities
           rescue StandardError => e
             log.warn("GAS phase_extract failed: #{e.message}")
             []
@@ -83,10 +94,16 @@ module Legion
 
           # Phase 3: Relate - classify relationships between new and existing entries
           def phase_relate(facts, _entities)
-            return [] unless defined?(Runners::Knowledge)
+            unless defined?(Runners::Knowledge)
+              log.debug('GAS phase_relate skipped reason=knowledge_runner_unavailable')
+              return []
+            end
 
             existing = fetch_similar_entries(facts)
-            return [] if existing.empty?
+            if existing.empty?
+              log.debug("GAS phase_relate skipped reason=no_existing_entries facts=#{facts.size}")
+              return []
+            end
 
             relations = []
             facts.each do |fact|
@@ -95,15 +112,24 @@ module Legion
                 relations << relation if relation
               end
             end
+            log.debug("GAS phase_relate facts=#{facts.size} existing=#{existing.size} relations=#{relations.size}")
             relations
           end
 
           # Phase 4: Synthesize - generate derivative knowledge
           def phase_synthesize(facts, _relations)
-            return [] if facts.length < 2
-            return [] unless llm_available?
+            if facts.length < 2
+              log.debug("GAS phase_synthesize skipped reason=insufficient_facts facts=#{facts.length}")
+              return []
+            end
+            unless llm_available?
+              log.debug('GAS phase_synthesize skipped reason=llm_unavailable')
+              return []
+            end
 
-            llm_synthesize(facts)
+            synthesis = llm_synthesize(facts)
+            log.debug("GAS phase_synthesize synthesis=#{synthesis.size}")
+            synthesis
           rescue StandardError => e
             log.warn("GAS phase_synthesize failed: #{e.message}")
             []
@@ -111,7 +137,10 @@ module Legion
 
           # Phase 5: Deposit - atomic write to Apollo
           def phase_deposit(facts, _entities, _relations, _synthesis, audit_event)
-            return { deposited: 0 } unless defined?(Runners::Knowledge)
+            unless defined?(Runners::Knowledge)
+              log.debug('GAS phase_deposit skipped reason=knowledge_runner_unavailable')
+              return { deposited: 0 }
+            end
 
             deposited = 0
             facts.each do |fact|
@@ -128,15 +157,24 @@ module Legion
             rescue StandardError => e
               log.warn("GAS deposit error: #{e.message}")
             end
+            log.info("GAS phase_deposit deposited=#{deposited} facts=#{facts.size}")
             { deposited: deposited }
           end
 
           # Phase 6: Anticipate - pre-cache likely follow-up questions
           def phase_anticipate(facts, _synthesis)
-            return [] if facts.empty?
-            return [] unless llm_available?
+            if facts.empty?
+              log.debug('GAS phase_anticipate skipped reason=no_facts')
+              return []
+            end
+            unless llm_available?
+              log.debug('GAS phase_anticipate skipped reason=llm_unavailable')
+              return []
+            end
 
-            llm_anticipate(facts)
+            anticipations = llm_anticipate(facts)
+            log.debug("GAS phase_anticipate anticipations=#{anticipations.size}")
+            anticipations
           rescue StandardError => e
             log.warn("GAS phase_anticipate failed: #{e.message}")
             []
@@ -153,7 +191,9 @@ module Legion
               log.warn("GAS fetch_similar_entries failed for fact: #{e.message}")
               next
             end
-            entries.uniq { |e| e[:id] }
+            unique = entries.uniq { |e| e[:id] }
+            log.debug("GAS fetch_similar_entries facts=#{facts.size} entries=#{unique.size}")
+            unique
           end
 
           def classify_relation(fact, entry)

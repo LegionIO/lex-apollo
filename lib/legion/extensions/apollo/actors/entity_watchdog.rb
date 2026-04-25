@@ -34,6 +34,7 @@ module Legion
 
           def scan_and_ingest
             texts = recent_task_log_texts
+            log.debug("EntityWatchdog scan_and_ingest log_texts=#{texts.size}")
             return { success: true, ingested: 0, reason: :no_logs } if texts.empty?
 
             ingested = 0
@@ -53,10 +54,10 @@ module Legion
               end
             end
 
-            log.debug("EntityWatchdog: ingested #{ingested} new entities from #{texts.size} log entries")
+            log.info("EntityWatchdog ingested=#{ingested} logs_scanned=#{texts.size}")
             { success: true, ingested: ingested, logs_scanned: texts.size }
           rescue StandardError => e
-            log.error("EntityWatchdog scan_and_ingest failed: #{e.message}")
+            handle_exception(e, level: :error, operation: 'apollo.entity_watchdog.scan_and_ingest')
             { success: false, error: e.message }
           end
 
@@ -71,7 +72,9 @@ module Legion
                    .order(Sequel.desc(:created_at))
                    .limit(log_limit)
                    .select_map(:message)
-            logs.map(&:to_s).reject(&:empty?).uniq
+            texts = logs.map(&:to_s).reject(&:empty?).uniq
+            log.debug("EntityWatchdog recent_task_log_texts lookback=#{lookback} limit=#{log_limit} raw=#{logs.size} unique=#{texts.size}")
+            texts
           rescue StandardError => e
             log.warn("EntityWatchdog recent_task_log_texts failed: #{e.message}")
             []
@@ -104,8 +107,9 @@ module Legion
               source_agent: 'lex-apollo:entity_watchdog',
               context:      { entity_type: entity[:type], original_name: entity[:name] }
             ).publish
+            log.info("EntityWatchdog published entity type=#{entity[:type]} name=#{entity[:name]}")
           rescue StandardError => e
-            log.error("EntityWatchdog publish failed: #{e.message}")
+            handle_exception(e, level: :error, operation: 'apollo.entity_watchdog.publish_entity_ingest')
           end
 
           def entity_types
