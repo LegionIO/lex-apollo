@@ -85,9 +85,22 @@ module Legion
 
             content = normalize_text_input(content)
             log.debug("Apollo Knowledge.handle_ingest content_length=#{content.length} content_type=#{content_type} tags=#{Array(tags).size} source_agent=#{source_agent} source_channel=#{source_channel || 'nil'}") # rubocop:disable Layout/LineLength
-            return { success: false, error: 'content is required' } if content.strip.empty?
-            return { success: false, error: 'content_type is required' } if content_type.nil?
-            return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
+            if content.strip.empty?
+              safe_tags = Array(tags).map(&:to_s).map { |t| t.gsub(/[\r\n]+/, ' ') }
+              log.warn("[apollo][handle_ingest] early-return: content is required " \
+                       "content_type=#{content_type} tags=#{safe_tags.inspect}")
+              return { success: false, error: 'content is required' }
+            end
+            if content_type.nil?
+              log.warn("[apollo][handle_ingest] early-return: content_type is required " \
+                       "content_length=#{content.to_s.length}")
+              return { success: false, error: 'content_type is required' }
+            end
+            unless defined?(Legion::Data::Model::ApolloEntry)
+              log.warn("[apollo][handle_ingest] early-return: apollo_data_not_available " \
+                       "content_type=#{content_type}")
+              return { success: false, error: 'apollo_data_not_available' }
+            end
 
             hash = content_hash || (defined?(Helpers::Writeback) ? Helpers::Writeback.content_hash(content) : nil)
             existing = active_duplicate_for_hash(hash)

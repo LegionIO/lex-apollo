@@ -337,6 +337,36 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         )
       end
     end
+
+    context 'early-return warn logs' do
+      let(:logger) { instance_double('Logger', debug: nil, info: nil, warn: nil) }
+
+      before { allow(host).to receive(:log).and_return(logger) }
+
+      it 'emits a warn log when content is nil' do
+        host.handle_ingest(content: nil, content_type: 'fact')
+        expect(logger).to have_received(:warn).with(/early-return: content is required/)
+      end
+
+      it 'emits a warn log when content_type is nil' do
+        host.handle_ingest(content: 'something', content_type: nil)
+        expect(logger).to have_received(:warn).with(/early-return: content_type is required/)
+      end
+
+      it 'emits a warn log when apollo_data_not_available' do
+        hide_const('Legion::Data::Model::ApolloEntry') if defined?(Legion::Data::Model::ApolloEntry)
+        host.handle_ingest(content: 'something', content_type: 'fact')
+        expect(logger).to have_received(:warn).with(/early-return: apollo_data_not_available/)
+      end
+
+      it 'sanitizes newline-bearing tags in the warn log' do
+        host.handle_ingest(content: nil, content_type: 'fact', tags: ["evil\nFAKE LOG LINE", 'normal'])
+        expect(logger).to have_received(:warn) do |msg|
+          expect(msg).to include('evil FAKE LOG LINE')
+          expect(msg).not_to include("\n")
+        end
+      end
+    end
   end
 
   describe '#handle_query' do
