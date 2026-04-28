@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.22] - 2026-04-28
+
+### Fixed
+- `/api/apollo/stats` now returns the health UI metrics Interlink expects: `recent_24h`, `avg_confidence`, and a synthesized `by_status["active"]` count for non-archived entries. This keeps the Knowledge Health cards populated instead of rendering missing values. Fixes #16.
+
 ## [0.4.21] - 2026-04-27
 
 ### Changed

@@ -9,6 +9,37 @@ module Legion
       class Api < Sinatra::Base
         set :host_authorization, permitted: :any
 
+        class << self
+          def stats_payload(now: Time.now)
+            return { error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
+
+            entries = Legion::Data::Model::ApolloEntry
+            by_status = grouped_counts(entries, :status)
+            by_status['active'] = entries.exclude(status: 'archived').count
+
+            stats = {
+              total_entries:   entries.count,
+              recent_24h:      entries.where { created_at >= (now - 86_400) }.count,
+              avg_confidence:  average_confidence(entries),
+              by_status:       by_status,
+              by_content_type: grouped_counts(entries, :content_type)
+            }
+            stats[:total_relations] = Legion::Data::Model::ApolloRelation.count if defined?(Legion::Data::Model::ApolloRelation)
+            stats
+          end
+
+          private
+
+          def grouped_counts(entries, column)
+            entries.group_and_count(column).all.to_h { |row| [row[column].to_s, row[:count]] }
+          end
+
+          def average_confidence(entries)
+            avg = entries.avg(:confidence)
+            avg&.to_f&.round(3)
+          end
+        end
+
         before do
           content_type :json
         end
@@ -140,18 +171,7 @@ module Legion
 
         # Statistics
         get '/api/apollo/stats' do
-          stats = {}
-          if defined?(Legion::Data::Model::ApolloEntry)
-            stats[:total_entries] = Legion::Data::Model::ApolloEntry.count
-            stats[:by_status]     = Legion::Data::Model::ApolloEntry.group_and_count(:status).all
-                                                                    .to_h { |r| [r[:status], r[:count]] }
-            stats[:by_content_type] = Legion::Data::Model::ApolloEntry.group_and_count(:content_type).all
-                                                                      .to_h { |r| [r[:content_type], r[:count]] }
-            stats[:total_relations] = Legion::Data::Model::ApolloRelation.count if defined?(Legion::Data::Model::ApolloRelation)
-          else
-            stats[:error] = 'apollo_data_not_available'
-          end
-          stats.to_json
+          self.class.stats_payload.to_json
         end
       end
     end
