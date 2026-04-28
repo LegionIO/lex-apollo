@@ -85,9 +85,8 @@ module Legion
 
             content = normalize_text_input(content)
             log.debug("Apollo Knowledge.handle_ingest content_length=#{content.length} content_type=#{content_type} tags=#{Array(tags).size} source_agent=#{source_agent} source_channel=#{source_channel || 'nil'}") # rubocop:disable Layout/LineLength
-            return { success: false, error: 'content is required' } if content.strip.empty?
-            return { success: false, error: 'content_type is required' } if content_type.nil?
-            return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
+            early_error = ingest_early_return_error(content: content, content_type: content_type, tags: tags)
+            return early_error if early_error
 
             hash = content_hash || (defined?(Helpers::Writeback) ? Helpers::Writeback.content_hash(content) : nil)
             existing = active_duplicate_for_hash(hash)
@@ -352,6 +351,27 @@ module Legion
           CONFLICT_CHECK_MAX_CHARS = 4000
 
           private
+
+          def ingest_early_return_error(content:, content_type:, tags:)
+            if content.strip.empty?
+              safe_tags = Array(tags).map(&:to_s).map { |t| t.gsub(/[\r\n]+/, ' ') }
+              log.warn('[apollo][handle_ingest] early-return: content is required ' \
+                       "content_type=#{content_type} tags=#{safe_tags.inspect}")
+              return { success: false, error: 'content is required' }
+            end
+
+            if content_type.nil?
+              log.warn('[apollo][handle_ingest] early-return: content_type is required ' \
+                       "content_length=#{content.to_s.length}")
+              return { success: false, error: 'content_type is required' }
+            end
+
+            return nil if defined?(Legion::Data::Model::ApolloEntry)
+
+            log.warn('[apollo][handle_ingest] early-return: apollo_data_not_available ' \
+                     "content_type=#{content_type}")
+            { success: false, error: 'apollo_data_not_available' }
+          end
 
           def normalize_content_type(raw)
             sym = raw.to_s.delete_prefix(':').gsub(%r{[/\s]}, '_').strip.downcase.to_sym

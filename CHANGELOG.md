@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.21] - 2026-04-27
+
+### Changed
+- `Apollo::Runners::Knowledge#handle_ingest` now emits warn-level logs on the three early-return failure paths (nil/blank content, nil content_type, apollo_data_not_available). Companion to PR #15: that PR added `handle_exception` to the rescue paths; this PR closes the silent-failure window for the early-return paths that fire BEFORE any rescue would. Tag values in the log line are sanitized via `gsub(/[\r\n]+/, ' ')` to prevent log-line injection from caller-controlled tags.
+
 ## [0.4.20] - 2026-04-25
 
 ### Fixed
