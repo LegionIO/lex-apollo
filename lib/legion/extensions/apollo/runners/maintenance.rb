@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative '../helpers/confidence'
+require_relative '../helpers/data_models'
 require_relative '../helpers/similarity'
 
 module Legion
@@ -65,13 +66,13 @@ module Legion
           end
 
           def check_corroboration(**) # rubocop:disable Metrics/CyclomaticComplexity
-            unless defined?(Legion::Data::Model::ApolloEntry)
+            unless Helpers::DataModels.apollo_entry_available?
               log.warn('Apollo Maintenance.check_corroboration skipped: apollo_data_not_available')
               return { success: false, error: 'apollo_data_not_available' }
             end
 
-            candidates = Legion::Data::Model::ApolloEntry.where(status: 'candidate').exclude(embedding: nil).all
-            confirmed = Legion::Data::Model::ApolloEntry.where(status: 'confirmed').exclude(embedding: nil).all
+            candidates = Helpers::DataModels.apollo_entry.where(status: 'candidate').exclude(embedding: nil).all
+            confirmed = Helpers::DataModels.apollo_entry.where(status: 'confirmed').exclude(embedding: nil).all
             log.debug("Apollo Maintenance.check_corroboration candidates=#{candidates.size} confirmed=#{confirmed.size}")
 
             promoted = 0
@@ -104,7 +105,7 @@ module Legion
                 updated_at:   Time.now
               )
 
-              Legion::Data::Model::ApolloRelation.create(
+              Helpers::DataModels.apollo_relation.create(
                 from_entry_id: candidate.id,
                 to_entry_id:   match.id,
                 relation_type: 'similar_to',

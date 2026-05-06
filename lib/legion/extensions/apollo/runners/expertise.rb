@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative '../helpers/data_models'
+
 module Legion
   module Extensions
     module Apollo
@@ -18,15 +20,15 @@ module Legion
           end
 
           def aggregate(**)
-            unless defined?(Legion::Data::Model::ApolloEntry)
+            unless Helpers::DataModels.apollo_entry_available?
               log.warn('Apollo Expertise.aggregate skipped: apollo_data_not_available')
               return { success: false, error: 'apollo_data_not_available' }
             end
 
-            entries = Legion::Data::Model::ApolloEntry
-                      .select(:source_agent, :tags, :confidence)
-                      .exclude(source_agent: nil)
-                      .all
+            entries = Helpers::DataModels.apollo_entry
+                                         .select(:source_agent, :tags, :confidence)
+                                         .exclude(source_agent: nil)
+                                         .all
             log.debug("Apollo Expertise.aggregate entries=#{entries.size}")
 
             agent_set = Set.new
@@ -58,13 +60,13 @@ module Legion
           def upsert_expertise_group(group)
             count = group[:confidences].size
             proficiency = expertise_proficiency(group[:confidences])
-            existing = Legion::Data::Model::ApolloExpertise
-                       .where(agent_id: group[:agent_id], domain: group[:domain]).first
+            existing = Helpers::DataModels.apollo_expertise
+                                          .where(agent_id: group[:agent_id], domain: group[:domain]).first
 
             if existing
               existing.update(proficiency: proficiency, entry_count: count, last_active_at: Time.now)
             else
-              Legion::Data::Model::ApolloExpertise.create(
+              Helpers::DataModels.apollo_expertise.create(
                 agent_id: group[:agent_id], domain: group[:domain],
                 proficiency: proficiency, entry_count: count, last_active_at: Time.now
               )

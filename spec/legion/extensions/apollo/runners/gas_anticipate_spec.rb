@@ -38,9 +38,6 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Gas, '.phase_anticipate' do
     before do
       stub_const('Legion::LLM::Pipeline::GaiaCaller', gaia_caller)
       allow(gaia_caller).to receive(:structured).and_return(mock_response)
-      allow(Legion::JSON).to receive(:load).and_return(
-        { 'questions' => ['How fast is pgvector HNSW search?', 'What distance metrics does pgvector support?'] }
-      )
     end
 
     it 'generates anticipated questions' do

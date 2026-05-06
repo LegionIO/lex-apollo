@@ -16,7 +16,7 @@ module Legion
             defined?(Legion::Extensions::Apollo::Runners::Knowledge) &&
               Legion.const_defined?(:Transport, false)
           rescue StandardError => e
-            log.warn("Ingest enabled? check failed: #{e.message}")
+            handle_exception(e, level: :warn, operation: 'apollo.ingest.enabled')
             false
           end
         end

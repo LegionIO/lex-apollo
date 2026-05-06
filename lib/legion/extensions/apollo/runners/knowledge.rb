@@ -1,7 +1,9 @@
 # frozen_string_literal: true
 
-require 'json'
+require 'legion/json'
+require 'legion/settings'
 require_relative '../helpers/confidence'
+require_relative '../helpers/data_models'
 
 module Legion
   module Extensions
@@ -26,9 +28,9 @@ module Legion
 
           def store_knowledge(content:, content_type:, tags: [], source_agent: nil, context: {}, **)
             content_type = normalize_content_type(content_type)
-            log.debug("Apollo Knowledge.store_knowledge content_type=#{content_type} tags=#{Array(tags).size} source_agent=#{source_agent || 'nil'} data_available=#{defined?(Legion::Data::Model::ApolloEntry) ? true : false}") # rubocop:disable Layout/LineLength
+            log.debug("Apollo Knowledge.store_knowledge content_type=#{content_type} tags=#{Array(tags).size} source_agent=#{source_agent || 'nil'} data_available=#{Helpers::DataModels.apollo_entry_available?}") # rubocop:disable Layout/LineLength
 
-            if defined?(Legion::Data::Model::ApolloEntry)
+            if Helpers::DataModels.apollo_entry_available?
               return handle_ingest(content: content, content_type: content_type,
                                    tags: Array(tags), source_agent: source_agent, context: context, **)
             end
@@ -44,8 +46,8 @@ module Legion
           end
 
           def query_knowledge(query:, limit: Helpers::GraphQuery.default_query_limit, min_confidence: Helpers::GraphQuery.default_query_min_confidence, status: %i[confirmed candidate], tags: nil, **) # rubocop:disable Layout/LineLength
-            log.debug("Apollo Knowledge.query_knowledge query_length=#{query.to_s.length} limit=#{limit} statuses=#{Array(status).join(',')} tags=#{Array(tags).size} data_available=#{defined?(Legion::Data::Model::ApolloEntry) ? true : false}") # rubocop:disable Layout/LineLength
-            if defined?(Legion::Data::Model::ApolloEntry)
+            log.debug("Apollo Knowledge.query_knowledge query_length=#{query.to_s.length} limit=#{limit} statuses=#{Array(status).join(',')} tags=#{Array(tags).size} data_available=#{Helpers::DataModels.apollo_entry_available?}") # rubocop:disable Layout/LineLength
+            if Helpers::DataModels.apollo_entry_available?
               return handle_query(query: query, limit: limit, min_confidence: min_confidence,
                                   status: status, tags: tags, **)
             end
@@ -61,8 +63,8 @@ module Legion
           end
 
           def related_entries(entry_id:, relation_types: nil, depth: Helpers::GraphQuery.default_depth, **)
-            log.debug("Apollo Knowledge.related_entries entry_id=#{entry_id} depth=#{depth} relation_types=#{Array(relation_types).join(',')} data_available=#{defined?(Legion::Data::Model::ApolloEntry) ? true : false}") # rubocop:disable Layout/LineLength
-            return handle_traverse(entry_id: entry_id, depth: depth, relation_types: relation_types, **) if defined?(Legion::Data::Model::ApolloEntry)
+            log.debug("Apollo Knowledge.related_entries entry_id=#{entry_id} depth=#{depth} relation_types=#{Array(relation_types).join(',')} data_available=#{Helpers::DataModels.apollo_entry_available?}") # rubocop:disable Layout/LineLength
+            return handle_traverse(entry_id: entry_id, depth: depth, relation_types: relation_types, **) if Helpers::DataModels.apollo_entry_available?
 
             {
               action:         :traverse,
@@ -84,6 +86,7 @@ module Legion
             return { status: :skipped } if skip
 
             content = normalize_text_input(content)
+            content_type = normalize_content_type(content_type.nil? ? :observation : content_type)
             log.debug("Apollo Knowledge.handle_ingest content_length=#{content.length} content_type=#{content_type} tags=#{Array(tags).size} source_agent=#{source_agent} source_channel=#{source_channel || 'nil'}") # rubocop:disable Layout/LineLength
             early_error = ingest_early_return_error(content: content, content_type: content_type, tags: tags)
             return early_error if early_error
@@ -116,7 +119,7 @@ module Legion
 
             upsert_expertise(source_agent: metadata[:source_agent], domain: metadata[:domain])
 
-            Legion::Data::Model::ApolloAccessLog.create(
+            Helpers::DataModels.apollo_access_log.create(
               entry_id: existing_id, agent_id: metadata[:source_agent], action: 'ingest'
             )
 
@@ -131,8 +134,9 @@ module Legion
           end
 
           def handle_query(query:, limit: Helpers::GraphQuery.default_query_limit, min_confidence: Helpers::GraphQuery.default_query_min_confidence, status: UNSET, tags: nil, domain: nil, agent_id: 'unknown', **) # rubocop:disable Layout/LineLength
-            return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
+            return { success: false, error: 'apollo_data_not_available' } unless Helpers::DataModels.apollo_entry_available?
 
+            entry_model = Helpers::DataModels.apollo_entry
             query = normalize_text_input(query)
             status_defaulted = status.equal?(UNSET)
             requested_status = status_defaulted ? DEFAULT_QUERY_STATUS : status
@@ -148,26 +152,16 @@ module Legion
               statuses: Array(requested_status).map(&:to_s), tags: tags, domain: domain
             )
 
-            db = Legion::Data::Model::ApolloEntry.db
+            db = entry_model.db
             entries = db.fetch(sql, embedding: Sequel.lit("'[#{embedding.join(',')}]'::vector")).all
 
             entries = entries.reject { |e| e[:distance].respond_to?(:nan?) && e[:distance].nan? }
 
             entries.each do |entry|
-              Legion::Data::Model::ApolloEntry.where(id: entry[:id]).update(
-                access_count: Sequel.expr(:access_count) + 1,
-                confidence:   Helpers::Confidence.apply_retrieval_boost(
-                  confidence: entry[:confidence]
-                ),
-                updated_at:   Time.now
-              )
+              boost_entry_after_query(entry_model, entry)
             end
 
-            if entries.any?
-              Legion::Data::Model::ApolloAccessLog.create(
-                entry_id: entries.first&.dig(:id), agent_id: agent_id, action: 'query'
-              )
-            end
+            record_query_access(entry_id: entries.first&.dig(:id), agent_id: agent_id) if entries.any?
 
             formatted = entries.map do |entry|
               { id: entry[:id], content: entry[:content], content_type: entry[:content_type],
@@ -184,7 +178,7 @@ module Legion
           end
 
           def handle_traverse(entry_id:, depth: Helpers::GraphQuery.default_depth, relation_types: nil, agent_id: 'unknown', **)
-            return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
+            return { success: false, error: 'apollo_data_not_available' } unless Helpers::DataModels.apollo_entry_available?
 
             log.debug("Apollo Knowledge.handle_traverse entry_id=#{entry_id} depth=#{depth} relation_types=#{Array(relation_types).join(',')} agent_id=#{agent_id}") # rubocop:disable Layout/LineLength
             # Whitelist relation_types to prevent SQL injection (they are string-interpolated in build_traversal_sql)
@@ -194,11 +188,11 @@ module Legion
             end
 
             sql = Helpers::GraphQuery.build_traversal_sql(depth: depth, relation_types: relation_types)
-            db = Legion::Data::Model::ApolloEntry.db
+            db = Helpers::DataModels.apollo_entry.db
             entries = db.fetch(sql, entry_id: entry_id).all
 
             if entries.any? && agent_id != 'unknown'
-              Legion::Data::Model::ApolloAccessLog.create(
+              Helpers::DataModels.apollo_access_log.create(
                 entry_id: entry_id, agent_id: agent_id, action: 'query'
               )
             end
@@ -217,13 +211,13 @@ module Legion
           end
 
           def redistribute_knowledge(agent_id:, min_confidence: Helpers::Confidence.apollo_setting(:query, :redistribute_min_confidence, default: 0.5), **)
-            return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
+            return { success: false, error: 'apollo_data_not_available' } unless Helpers::DataModels.apollo_entry_available?
 
             log.debug("Apollo Knowledge.redistribute_knowledge agent_id=#{agent_id} min_confidence=#{min_confidence}")
-            entries = Legion::Data::Model::ApolloEntry
-                      .where(source_agent: agent_id, status: 'confirmed')
-                      .where { confidence > min_confidence }
-                      .all
+            entries = Helpers::DataModels.apollo_entry
+                                         .where(source_agent: agent_id, status: 'confirmed')
+                                         .where { confidence > min_confidence }
+                                         .all
 
             return { success: true, redistributed: 0 } if entries.empty?
 
@@ -254,7 +248,7 @@ module Legion
           def retrieve_relevant(query: nil, limit: Helpers::Confidence.apollo_setting(:query, :retrieval_limit, default: 5), min_confidence: Helpers::GraphQuery.default_query_min_confidence, tags: nil, domain: nil, skip: false, **) # rubocop:disable Layout/LineLength
             return { status: :skipped } if skip
 
-            return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
+            return { success: false, error: 'apollo_data_not_available' } unless Helpers::DataModels.apollo_entry_available?
 
             query = normalize_text_input(query)
             log.debug("Apollo Knowledge.retrieve_relevant query_length=#{query.length} limit=#{limit} min_confidence=#{min_confidence} tags=#{Array(tags).size} domain=#{domain || 'nil'}") # rubocop:disable Layout/LineLength
@@ -266,12 +260,12 @@ module Legion
               statuses: %w[confirmed candidate], tags: tags, domain: domain
             )
 
-            db = Legion::Data::Model::ApolloEntry.db
+            db = Helpers::DataModels.apollo_entry.db
             entries = db.fetch(sql, embedding: Sequel.lit("'[#{embedding.join(',')}]'::vector")).all
             entries = entries.reject { |e| e[:distance].respond_to?(:nan?) && e[:distance].nan? }
 
             entries.each do |entry|
-              Legion::Data::Model::ApolloEntry.where(id: entry[:id]).update(
+              Helpers::DataModels.apollo_entry.where(id: entry[:id]).update(
                 confidence: Helpers::Confidence.apply_retrieval_boost(confidence: entry[:confidence]),
                 updated_at: Time.now
               )
@@ -366,7 +360,7 @@ module Legion
               return { success: false, error: 'content_type is required' }
             end
 
-            return nil if defined?(Legion::Data::Model::ApolloEntry)
+            return nil if Helpers::DataModels.apollo_entry_available?
 
             log.warn('[apollo][handle_ingest] early-return: apollo_data_not_available ' \
                      "content_type=#{content_type}")
@@ -382,7 +376,7 @@ module Legion
           def embed_text(text)
             text = normalize_text_input(text)
             log.debug("Apollo Knowledge.embed_text text_length=#{text.length}")
-            result = Legion::LLM::Embeddings.generate(text: text)
+            result = Legion::LLM::Call::Embeddings.generate(text: text)
             vector = result.is_a?(Hash) ? result[:vector] : result
             if vector.is_a?(Array) && vector.any?
               log.debug("Apollo Knowledge.embed_text vector_dimensions=#{vector.length}")
@@ -392,7 +386,7 @@ module Legion
               Array.new(1024, 0.0)
             end
           rescue StandardError => e
-            log.warn("Apollo Knowledge.embed_text failed: #{e.message}")
+            handle_exception(e, level: :warn, operation: 'apollo.knowledge.embed_text')
             Array.new(1024, 0.0)
           end
 
@@ -405,7 +399,7 @@ module Legion
 
             sanitize_for_postgres(result)
           rescue StandardError => e
-            log.warn("Apollo Knowledge.normalize_text_input failed: #{e.message}")
+            handle_exception(e, level: :warn, operation: 'apollo.knowledge.normalize_text_input')
             ''
           end
 
@@ -429,10 +423,10 @@ module Legion
           def active_duplicate_for_hash(hash)
             return nil unless hash
 
-            existing = Legion::Data::Model::ApolloEntry
-                       .where(content_hash: hash)
-                       .exclude(status: 'archived')
-                       .first
+            existing = Helpers::DataModels.apollo_entry
+                                          .where(content_hash: hash)
+                                          .exclude(status: 'archived')
+                                          .first
             existing&.update(confidence: [existing.confidence + Helpers::Confidence.retrieval_boost, 1.0].min)
             log.debug("Apollo Knowledge.active_duplicate_for_hash matched entry_id=#{existing.id}") if existing
             existing
@@ -452,14 +446,14 @@ module Legion
           end
 
           def create_candidate_entry(content:, content_type:, context:, metadata:, content_hash:, embedding:)
-            new_entry = Legion::Data::Model::ApolloEntry.create(
+            new_entry = Helpers::DataModels.apollo_entry.create(
               content:          content,
               content_type:     content_type,
               confidence:       Helpers::Confidence.initial_confidence,
               source_agent:     metadata[:source_agent],
               source_provider:  metadata[:source_provider],
               source_channel:   metadata[:source_channel],
-              source_context:   ::JSON.dump(context.is_a?(Hash) ? context : {}),
+              source_context:   json_dump(context.is_a?(Hash) ? context : {}),
               tags:             Sequel.pg_array(metadata[:tags]),
               status:           'candidate',
               knowledge_domain: metadata[:domain],
@@ -478,7 +472,7 @@ module Legion
 
           def list_entries_chronologically(query:, limit:, status:, status_defaulted:, tags:, domain:)
             log.debug("Apollo Knowledge.list_entries_chronologically limit=#{limit} statuses=#{Array(status).join(',')} status_defaulted=#{status_defaulted} tags=#{Array(tags).size} domain=#{domain || 'nil'}") # rubocop:disable Layout/LineLength
-            dataset = Legion::Data::Model::ApolloEntry.exclude(status: 'archived')
+            dataset = Helpers::DataModels.apollo_entry.exclude(status: 'archived')
             requested = Array(status).map(&:to_s).reject(&:empty?)
             dataset = dataset.where(status: requested) unless status_defaulted || requested.empty?
             dataset = dataset.where(Sequel.lit('tags && ?', Sequel.pg_array(Array(tags)))) if tags && !Array(tags).empty?
@@ -501,12 +495,28 @@ module Legion
               knowledge_domain: entry[:knowledge_domain] }
           end
 
+          def record_query_access(entry_id:, agent_id:)
+            Helpers::DataModels.apollo_access_log.create(
+              entry_id: entry_id, agent_id: agent_id, action: 'query'
+            )
+          end
+
+          def boost_entry_after_query(entry_model, entry)
+            entry_model.where(id: entry[:id]).update(
+              access_count: Sequel.expr(:access_count) + 1,
+              confidence:   Helpers::Confidence.apply_retrieval_boost(
+                confidence: entry[:confidence]
+              ),
+              updated_at:   Time.now
+            )
+          end
+
+          def settings
+            Legion::Extensions::Apollo.settings
+          end
+
           def allowed_domains_for(target_domain)
-            rules = if defined?(Legion::Settings) && Legion::Settings.dig(:apollo, :domain_isolation)
-                      Legion::Settings.dig(:apollo, :domain_isolation)
-                    else
-                      DOMAIN_ISOLATION
-                    end
+            rules = settings[:domain_isolation]
 
             allowed = rules[target_domain]
             return :all if allowed == :all || allowed.nil?
@@ -515,13 +525,13 @@ module Legion
           end
 
           def detect_contradictions(entry_id, embedding, content)
-            return [] unless embedding && defined?(Legion::Data::Model::ApolloEntry)
+            return [] unless embedding && Helpers::DataModels.apollo_entry_available?
 
             sim_limit = Helpers::Confidence.apollo_setting(:contradiction, :similar_limit, default: 10)
             sim_threshold = Helpers::Confidence.apollo_setting(:contradiction, :similarity_threshold, default: 0.7)
             rel_weight = Helpers::Confidence.apollo_setting(:contradiction, :relation_weight, default: 0.8)
 
-            db = Legion::Data::Model::ApolloEntry.db
+            db = Helpers::DataModels.apollo_entry.db
             log.debug("Apollo Knowledge.detect_contradictions entry_id=#{entry_id} similar_limit=#{sim_limit} threshold=#{sim_threshold}")
             similar = db.fetch(
               "SELECT id, content, embedding FROM apollo_entries WHERE id != :entry_id AND embedding IS NOT NULL ORDER BY embedding <=> :embedding LIMIT #{sim_limit}", # rubocop:disable Layout/LineLength
@@ -538,13 +548,13 @@ module Legion
               next unless sim > sim_threshold
               next unless llm_detects_conflict?(content, existing[:content])
 
-              Legion::Data::Model::ApolloRelation.create(
+              Helpers::DataModels.apollo_relation.create(
                 from_entry_id: entry_id, to_entry_id: existing[:id],
                 relation_type: 'contradicts', source_agent: 'system:contradiction',
                 weight: rel_weight
               )
 
-              Legion::Data::Model::ApolloEntry.where(id: [entry_id, existing[:id]]).update(status: 'disputed')
+              Helpers::DataModels.apollo_entry.where(id: [entry_id, existing[:id]]).update(status: 'disputed')
               contradictions << existing[:id]
             end
             log.info("Apollo Knowledge.detect_contradictions entry_id=#{entry_id} contradictions=#{contradictions.size}") if contradictions.any?
@@ -569,17 +579,17 @@ module Legion
             )
             result[:data]&.dig(:contradicts) == true
           rescue StandardError => e
-            log.warn("Apollo Knowledge.llm_detects_conflict? failed: #{e.message}")
+            handle_exception(e, level: :warn, operation: 'apollo.knowledge.llm_detects_conflict')
             false
           end
 
           def find_corroboration(embedding, content_type_sym, source_agent, source_channel = nil)
             scan_limit = Helpers::Confidence.apollo_setting(:corroboration, :scan_limit, default: 50)
             log.debug("Apollo Knowledge.find_corroboration content_type=#{content_type_sym} source_agent=#{source_agent} source_channel=#{source_channel || 'nil'} scan_limit=#{scan_limit}") # rubocop:disable Layout/LineLength
-            existing = Legion::Data::Model::ApolloEntry
-                       .where(content_type: content_type_sym)
-                       .exclude(embedding: nil)
-                       .limit(scan_limit)
+            existing = Helpers::DataModels.apollo_entry
+                                          .where(content_type: content_type_sym)
+                                          .exclude(embedding: nil)
+                                          .limit(scan_limit)
 
             existing.each do |entry|
               next unless entry.embedding
@@ -601,7 +611,7 @@ module Legion
                 confidence: Helpers::Confidence.apply_corroboration_boost(confidence: entry.confidence, weight: weight),
                 updated_at: Time.now
               )
-              Legion::Data::Model::ApolloRelation.create(
+              Helpers::DataModels.apollo_relation.create(
                 from_entry_id: entry.id,
                 to_entry_id:   entry.id,
                 relation_type: 'similar_to',
@@ -632,12 +642,12 @@ module Legion
 
           def upsert_expertise(source_agent:, domain:)
             log.debug("Apollo Knowledge.upsert_expertise source_agent=#{source_agent} domain=#{domain}")
-            expertise = Legion::Data::Model::ApolloExpertise
-                        .where(agent_id: source_agent, domain: domain).first
+            expertise = Helpers::DataModels.apollo_expertise
+                                           .where(agent_id: source_agent, domain: domain).first
             if expertise
               expertise.update(entry_count: expertise.entry_count + 1, last_active_at: Time.now)
             else
-              Legion::Data::Model::ApolloExpertise.create(
+              Helpers::DataModels.apollo_expertise.create(
                 agent_id: source_agent, domain: domain,
                 proficiency: Helpers::Confidence.apollo_setting(:expertise, :initial_proficiency, default: 0.0),
                 entry_count: 1, last_active_at: Time.now
@@ -646,6 +656,11 @@ module Legion
           end
 
           include Legion::Extensions::Helpers::Lex if defined?(Legion::Extensions::Helpers::Lex)
+          include Legion::JSON::Helper
+          include Legion::Settings::Helper
+          extend Legion::Extensions::Helpers::Lex if defined?(Legion::Extensions::Helpers::Lex)
+          extend Legion::JSON::Helper
+          extend Legion::Settings::Helper
         end
       end
     end

@@ -83,6 +83,26 @@ RSpec.describe Legion::Extensions::Apollo::Api do
       )
     end
 
+    context 'when legion-data exposes namespaced Apollo models' do
+      before do
+        hide_const('Legion::Data::Model::ApolloEntry') if defined?(Legion::Data::Model::ApolloEntry)
+        hide_const('Legion::Data::Model::ApolloRelation') if defined?(Legion::Data::Model::ApolloRelation)
+        stub_const('Legion::Data::Model::Apollo::Entry', entry_model)
+        stub_const('Legion::Data::Model::Apollo::Relation', relation_model)
+      end
+
+      it 'uses the namespaced models for stats' do
+        payload = described_class.stats_payload(now: Time.utc(2026, 4, 28, 12, 0, 0))
+
+        expect(payload).to include(
+          total_entries:   6,
+          recent_24h:      2,
+          avg_confidence:  0.812,
+          total_relations: 4
+        )
+      end
+    end
+
     it 'returns an apollo data error when the entry model is unavailable' do
       hide_const('Legion::Data::Model::ApolloEntry')
 

@@ -17,7 +17,7 @@ module Legion
               Legion.const_defined?(:Transport, false) &&
               Helpers::Capability.apollo_write_enabled?
           rescue StandardError => e
-            log.warn("WritebackStore enabled? check failed: #{e.message}")
+            handle_exception(e, level: :warn, operation: 'apollo.writeback_store.enabled')
             false
           end
         end

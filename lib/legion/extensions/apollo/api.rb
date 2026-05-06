@@ -1,7 +1,9 @@
 # frozen_string_literal: true
 
 require 'sinatra/base' unless defined?(Sinatra)
-require 'json'
+require 'legion/logging'
+require 'legion/json'
+require 'legion/extensions/apollo/helpers/data_models'
 
 module Legion
   module Extensions
@@ -11,9 +13,9 @@ module Legion
 
         class << self
           def stats_payload(now: Time.now)
-            return { error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
+            return { error: 'apollo_data_not_available' } unless Helpers::DataModels.apollo_entry_available?
 
-            entries = Legion::Data::Model::ApolloEntry
+            entries = Helpers::DataModels.apollo_entry
             by_status = grouped_counts(entries, :status)
             by_status['active'] = entries.exclude(status: 'archived').count
 
@@ -24,7 +26,7 @@ module Legion
               by_status:       by_status,
               by_content_type: grouped_counts(entries, :content_type)
             }
-            stats[:total_relations] = Legion::Data::Model::ApolloRelation.count if defined?(Legion::Data::Model::ApolloRelation)
+            stats[:total_relations] = Helpers::DataModels.apollo_relation.count if Helpers::DataModels.apollo_relation_available?
             stats
           end
 
@@ -45,13 +47,17 @@ module Legion
         end
 
         helpers do
+          include Legion::Logging::Helper
+          include Legion::JSON::Helper
+
           def json_body
             body = request.body.read
             return {} if body.empty?
 
-            ::JSON.parse(body, symbolize_names: true)
-          rescue ::JSON::ParserError => e
-            halt 400, { error: "invalid JSON: #{e.message}" }.to_json
+            json_parse(body)
+          rescue Legion::JSON::ParseError => e
+            handle_exception(e, level: :warn, operation: 'apollo.api.json_body')
+            halt 400, json_dump(error: "invalid JSON: #{e.message}")
           end
 
           def runner
@@ -73,14 +79,14 @@ module Legion
 
         # Health check
         get '/api/apollo/health' do
-          available = defined?(Legion::Data::Model::ApolloEntry) ? true : false
-          { status: available ? 'ok' : 'degraded', data_available: available }.to_json
+          available = Helpers::DataModels.apollo_entry_available?
+          json_dump(status: available ? 'ok' : 'degraded', data_available: available)
         end
 
         # Query knowledge (semantic search)
         post '/api/apollo/query' do
           req = json_body
-          halt 400, { error: 'query is required' }.to_json unless req[:query]
+          halt 400, json_dump(error: 'query is required') unless req[:query]
 
           query_options = {
             query:          req[:query],
@@ -94,14 +100,14 @@ module Legion
 
           result = runner.handle_query(**query_options)
           status result[:success] ? 200 : 500
-          result.to_json
+          json_dump(result)
         end
 
         # Ingest knowledge
         post '/api/apollo/ingest' do
           req = json_body
-          halt 400, { error: 'content is required' }.to_json unless req[:content]
-          halt 400, { error: 'content_type is required' }.to_json unless req[:content_type]
+          halt 400, json_dump(error: 'content is required') unless req[:content]
+          halt 400, json_dump(error: 'content_type is required') unless req[:content_type]
 
           result = runner.handle_ingest(
             content:          req[:content],
@@ -114,13 +120,13 @@ module Legion
             context:          req[:context] || {}
           )
           status result[:success] ? 201 : 500
-          result.to_json
+          json_dump(result)
         end
 
         # Graph traversal
         post '/api/apollo/traverse' do
           req = json_body
-          halt 400, { error: 'entry_id is required' }.to_json unless req[:entry_id]
+          halt 400, json_dump(error: 'entry_id is required') unless req[:entry_id]
 
           result = runner.handle_traverse(
             entry_id:       req[:entry_id],
@@ -129,13 +135,13 @@ module Legion
             agent_id:       req[:agent_id] || 'api'
           )
           status result[:success] ? 200 : 500
-          result.to_json
+          json_dump(result)
         end
 
         # Retrieve relevant (GAIA-compatible)
         post '/api/apollo/retrieve' do
           req = json_body
-          halt 400, { error: 'query is required' }.to_json unless req[:query]
+          halt 400, json_dump(error: 'query is required') unless req[:query]
 
           result = runner.retrieve_relevant(
             query:          req[:query],
@@ -145,7 +151,7 @@ module Legion
             domain:         req[:domain]
           )
           status result[:success] ? 200 : 500
-          result.to_json
+          json_dump(result)
         end
 
         # Deprecate entry
@@ -154,24 +160,24 @@ module Legion
             entry_id: params[:id],
             reason:   json_body[:reason] || 'deprecated via API'
           )
-          result.to_json
+          json_dump(result)
         end
 
         # Domains at risk — must be declared before /:agent_id to avoid routing conflict
         get '/api/apollo/expertise/at-risk' do
           result = expertise_runner.domains_at_risk
-          result.to_json
+          json_dump(result)
         end
 
         # Expertise for an agent
         get '/api/apollo/expertise/:agent_id' do
           result = expertise_runner.agent_profile(agent_id: params[:agent_id])
-          result.to_json
+          json_dump(result)
         end
 
         # Statistics
         get '/api/apollo/stats' do
-          self.class.stats_payload.to_json
+          json_dump(self.class.stats_payload)
         end
       end
     end

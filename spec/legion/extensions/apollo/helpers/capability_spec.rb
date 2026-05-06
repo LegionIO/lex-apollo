@@ -13,6 +13,7 @@ end
 
 RSpec.describe Legion::Extensions::Apollo::Helpers::Capability do
   before do
+    Legion::Settings[:extensions][:apollo] = Legion::Extensions::Apollo.default_settings
     described_class.instance_variable_set(:@apollo_write_privilege, nil)
   end
 
@@ -31,12 +32,12 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Capability do
 
   describe '.can_write?' do
     it 'returns false when apollo_write setting is false' do
-      allow(Legion::Settings).to receive(:dig).with(:data, :apollo_write).and_return(false)
+      described_class.settings[:data][:apollo_write] = false
       expect(described_class.can_write?).to be false
     end
 
     it 'returns false when Data is not connected' do
-      allow(Legion::Settings).to receive(:dig).with(:data, :apollo_write).and_return(true)
+      described_class.settings[:data][:apollo_write] = true
       allow(Legion::Data).to receive(:connected?).and_return(false) if defined?(Legion::Data)
       expect(described_class.can_write?).to be false
     end
@@ -44,12 +45,11 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Capability do
 
   describe '.apollo_write_enabled?' do
     it 'reads from settings' do
-      allow(Legion::Settings).to receive(:dig).with(:data, :apollo_write).and_return(true)
+      described_class.settings[:data][:apollo_write] = true
       expect(described_class.apollo_write_enabled?).to be true
     end
 
     it 'defaults to false' do
-      allow(Legion::Settings).to receive(:dig).with(:data, :apollo_write).and_return(nil)
       expect(described_class.apollo_write_enabled?).to be false
     end
   end

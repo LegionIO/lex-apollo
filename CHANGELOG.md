@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.23] - 2026-05-06
+
+### Fixed
+- Apollo data model access now prefers the namespaced `Legion::Data::Model::Apollo::*` classes introduced by the legion-data schema cleanup while retaining fallback compatibility with the legacy `ApolloEntry`, `ApolloRelation`, `ApolloAccessLog`, and `ApolloExpertise` constants.
+
+### Changed
+- Apollo defaults are now declared directly in `Apollo.default_settings`, and Apollo helpers, runners, actors, and API paths use `Legion::Logging::Helper`, `Legion::Settings::Helper`, and `Legion::JSON` helper methods instead of direct logging/settings/JSON calls.
+
 ## [0.4.22] - 2026-04-28
 
 ### Fixed
