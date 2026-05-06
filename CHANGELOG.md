@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.23] - 2026-05-06
+
+### Fixed
+- Apollo data model access now prefers the namespaced `Legion::Data::Model::Apollo::*` classes introduced by the legion-data schema cleanup while retaining fallback compatibility with the legacy `ApolloEntry`, `ApolloRelation`, `ApolloAccessLog`, and `ApolloExpertise` constants.
+
 ## [0.4.22] - 2026-04-28
 
 ### Fixed
