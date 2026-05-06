@@ -12,9 +12,8 @@ module Legion
           }.freeze
 
           class << self
-            def log
-              Legion::Logging
-            end
+            include Legion::Logging::Helper
+            include Legion::Settings::Helper
 
             def detect_entities(text:, types: nil)
               return [] if text.nil? || text.empty?
@@ -23,11 +22,13 @@ module Legion
               entities = []
 
               types.each do |type_sym|
-                pattern = type_sym == :concept ? concept_pattern : ENTITY_PATTERNS[type_sym]
+                entity_type = type_sym == :repository ? :repo : type_sym
+                pattern = entity_type == :concept ? concept_pattern : ENTITY_PATTERNS[entity_type]
                 next unless pattern
 
                 text.scan(pattern).each do |match|
-                  entities << { type: type_sym, value: match.strip, confidence: Confidence.apollo_setting(:entity_watchdog, :detect_confidence, default: 0.5) }
+                  entities << { type: entity_type, value: match.strip,
+confidence: Confidence.apollo_setting(:entity_watchdog, :detect_confidence, default: 0.5) }
                 end
               end
 
@@ -55,11 +56,7 @@ module Legion
             end
 
             def concept_pattern
-              keywords = if defined?(Legion::Settings)
-                           Legion::Settings.dig(:apollo, :entity_watchdog, :concept_keywords) || []
-                         else
-                           []
-                         end
+              keywords = settings[:entity_watchdog][:concept_keywords]
               return nil if keywords.empty?
 
               Regexp.new("\\b(?:#{keywords.map { |k| Regexp.escape(k) }.join('|')})\\b", Regexp::IGNORECASE)
@@ -68,11 +65,7 @@ module Legion
             private
 
             def default_types
-              if defined?(Legion::Settings)
-                Legion::Settings.dig(:apollo, :entity_watchdog, :types) || %w[person service repo concept]
-              else
-                %w[person service repo concept]
-              end
+              settings[:entity_watchdog][:types]
             end
 
             def find_existing(_entity)

@@ -8,15 +8,14 @@ module Legion
     module Apollo
       module Helpers
         module Writeback
+          extend Legion::Logging::Helper
+          extend Legion::Settings::Helper
+
           RESEARCH_TOOLS = %w[read_file search_files search_content run_command].freeze
           MAX_CONTENT_LENGTH = 4000
           MIN_CONTENT_LENGTH = 50
 
           module_function
-
-          def log
-            Legion::Logging
-          end
 
           def evaluate_and_route(request:, response:, enrichments: {})
             return unless writeback_enabled?
@@ -25,7 +24,7 @@ module Legion
             payload = build_payload(request: request, response: response)
             route_payload(payload)
           rescue StandardError => e
-            log.warn("apollo writeback failed: #{e.message}")
+            handle_exception(e, level: :warn, operation: 'apollo.writeback.evaluate_and_route')
           end
 
           def should_capture?(_request, response, enrichments)
@@ -68,7 +67,7 @@ module Legion
             can_write = Helpers::Capability.can_write?
 
             if can_embed
-              result = Legion::LLM::Embeddings.generate(text: payload[:content])
+              result = Legion::LLM::Call::Embeddings.generate(text: payload[:content])
               vector = result.is_a?(Hash) ? result[:vector] : result
               payload[:embedding] = vector.is_a?(Array) && vector.any? ? vector : Array.new(1024, 0.0)
             end
@@ -87,7 +86,7 @@ module Legion
               Runners::Knowledge.handle_ingest(**payload)
             end
           rescue StandardError => e
-            log.warn("apollo direct write failed, falling back to transport: #{e.message}")
+            handle_exception(e, level: :warn, operation: 'apollo.writeback.write_directly')
             publish_to_transport(payload, has_embedding: !payload[:embedding].nil?)
           end
 
@@ -98,20 +97,20 @@ module Legion
               **payload, has_embedding: has_embedding
             ).publish
           rescue StandardError => e
-            log.warn("apollo writeback publish failed: #{e.message}")
+            handle_exception(e, level: :warn, operation: 'apollo.writeback.publish_to_transport')
           end
 
           def writeback_enabled?
-            Legion::Settings.dig(:apollo, :writeback, :enabled) != false
+            settings[:writeback][:enabled] != false
           rescue StandardError => e
-            log.warn("Apollo Writeback.writeback_enabled? failed: #{e.message}")
+            handle_exception(e, level: :warn, operation: 'apollo.writeback.writeback_enabled')
             true
           end
 
           def min_content_length
-            Legion::Settings.dig(:apollo, :writeback, :min_content_length) || MIN_CONTENT_LENGTH
+            settings[:writeback][:min_content_length]
           rescue StandardError => e
-            log.warn("Apollo Writeback.min_content_length failed: #{e.message}")
+            handle_exception(e, level: :warn, operation: 'apollo.writeback.min_content_length')
             MIN_CONTENT_LENGTH
           end
 
@@ -132,7 +131,7 @@ module Legion
 
             request.caller.dig(:requested_by, :identity) || 'unknown'
           rescue StandardError => e
-            log.warn("Apollo Writeback.extract_identity failed: #{e.message}")
+            handle_exception(e, level: :warn, operation: 'apollo.writeback.extract_identity')
             'unknown'
           end
 
@@ -142,7 +141,7 @@ module Legion
             user_msgs = Array(request.messages).select { |m| m[:role] == 'user' || m['role'] == 'user' }
             (user_msgs.last || {})[:content] || ''
           rescue StandardError => e
-            log.warn("Apollo Writeback.extract_user_query failed: #{e.message}")
+            handle_exception(e, level: :warn, operation: 'apollo.writeback.extract_user_query')
             ''
           end
 

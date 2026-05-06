@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
-require 'json'
+require 'legion/json'
+require 'legion/settings'
 require_relative '../helpers/confidence'
 require_relative '../helpers/data_models'
 
@@ -85,6 +86,7 @@ module Legion
             return { status: :skipped } if skip
 
             content = normalize_text_input(content)
+            content_type = normalize_content_type(content_type.nil? ? :observation : content_type)
             log.debug("Apollo Knowledge.handle_ingest content_length=#{content.length} content_type=#{content_type} tags=#{Array(tags).size} source_agent=#{source_agent} source_channel=#{source_channel || 'nil'}") # rubocop:disable Layout/LineLength
             early_error = ingest_early_return_error(content: content, content_type: content_type, tags: tags)
             return early_error if early_error
@@ -374,7 +376,7 @@ module Legion
           def embed_text(text)
             text = normalize_text_input(text)
             log.debug("Apollo Knowledge.embed_text text_length=#{text.length}")
-            result = Legion::LLM::Embeddings.generate(text: text)
+            result = Legion::LLM::Call::Embeddings.generate(text: text)
             vector = result.is_a?(Hash) ? result[:vector] : result
             if vector.is_a?(Array) && vector.any?
               log.debug("Apollo Knowledge.embed_text vector_dimensions=#{vector.length}")
@@ -384,7 +386,7 @@ module Legion
               Array.new(1024, 0.0)
             end
           rescue StandardError => e
-            log.warn("Apollo Knowledge.embed_text failed: #{e.message}")
+            handle_exception(e, level: :warn, operation: 'apollo.knowledge.embed_text')
             Array.new(1024, 0.0)
           end
 
@@ -397,7 +399,7 @@ module Legion
 
             sanitize_for_postgres(result)
           rescue StandardError => e
-            log.warn("Apollo Knowledge.normalize_text_input failed: #{e.message}")
+            handle_exception(e, level: :warn, operation: 'apollo.knowledge.normalize_text_input')
             ''
           end
 
@@ -451,7 +453,7 @@ module Legion
               source_agent:     metadata[:source_agent],
               source_provider:  metadata[:source_provider],
               source_channel:   metadata[:source_channel],
-              source_context:   ::JSON.dump(context.is_a?(Hash) ? context : {}),
+              source_context:   json_dump(context.is_a?(Hash) ? context : {}),
               tags:             Sequel.pg_array(metadata[:tags]),
               status:           'candidate',
               knowledge_domain: metadata[:domain],
@@ -509,12 +511,12 @@ module Legion
             )
           end
 
+          def settings
+            Legion::Extensions::Apollo.settings
+          end
+
           def allowed_domains_for(target_domain)
-            rules = if defined?(Legion::Settings) && Legion::Settings.dig(:apollo, :domain_isolation)
-                      Legion::Settings.dig(:apollo, :domain_isolation)
-                    else
-                      DOMAIN_ISOLATION
-                    end
+            rules = settings[:domain_isolation]
 
             allowed = rules[target_domain]
             return :all if allowed == :all || allowed.nil?
@@ -577,7 +579,7 @@ module Legion
             )
             result[:data]&.dig(:contradicts) == true
           rescue StandardError => e
-            log.warn("Apollo Knowledge.llm_detects_conflict? failed: #{e.message}")
+            handle_exception(e, level: :warn, operation: 'apollo.knowledge.llm_detects_conflict')
             false
           end
 
@@ -654,6 +656,11 @@ module Legion
           end
 
           include Legion::Extensions::Helpers::Lex if defined?(Legion::Extensions::Helpers::Lex)
+          include Legion::JSON::Helper
+          include Legion::Settings::Helper
+          extend Legion::Extensions::Helpers::Lex if defined?(Legion::Extensions::Helpers::Lex)
+          extend Legion::JSON::Helper
+          extend Legion::Settings::Helper
         end
       end
     end

@@ -21,7 +21,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         { vector: Array.new(1024, 0.0), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 }
       end
     end
-    stub_const('Legion::LLM::Embeddings', embeddings_mod)
+    stub_const('Legion::LLM::Call::Embeddings', embeddings_mod)
   end
 
   describe '#store_knowledge' do
@@ -158,7 +158,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         stub_const('Legion::Data::Model::ApolloRelation', mock_relation_class)
         stub_const('Legion::Data::Model::ApolloExpertise', mock_expertise_class)
         stub_const('Legion::Data::Model::ApolloAccessLog', mock_access_log_class)
-        allow(Legion::LLM::Embeddings).to receive(:generate)
+        allow(Legion::LLM::Call::Embeddings).to receive(:generate)
           .and_return({ vector: Array.new(1024, 0.0), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
 
         # Corroboration lookup chain
@@ -181,6 +181,15 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         expect(result[:success]).to be true
         expect(result[:status]).to eq('candidate')
         expect(result[:corroborated]).to be false
+      end
+
+      it 'defaults content_type to :observation when nil' do
+        expect(mock_entry_class).to receive(:create).with(
+          hash_including(content_type: 'observation')
+        ).and_return(mock_entry)
+        result = host.handle_ingest(content: 'gaia tick result', content_type: nil,
+                                    source_agent: 'gaia')
+        expect(result[:success]).to be true
       end
 
       it 'creates expertise record for source agent' do
@@ -318,7 +327,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
     context 'when Sequel raises an error' do
       before do
         stub_const('Legion::Data::Model::ApolloEntry', Class.new)
-        allow(Legion::LLM::Embeddings).to receive(:generate)
+        allow(Legion::LLM::Call::Embeddings).to receive(:generate)
           .and_return({ vector: Array.new(1024, 0.0), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
         allow(Legion::Data::Model::ApolloEntry).to receive(:where)
           .and_raise(Sequel::Error, 'connection lost')
@@ -348,9 +357,10 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         expect(logger).to have_received(:warn).with(/early-return: content is required/)
       end
 
-      it 'emits a warn log when content_type is nil' do
+      it 'does not emit a content_type warn when content_type is nil (defaults to :observation)' do
+        hide_const('Legion::Data::Model::ApolloEntry') if defined?(Legion::Data::Model::ApolloEntry)
         host.handle_ingest(content: 'something', content_type: nil)
-        expect(logger).to have_received(:warn).with(/early-return: content_type is required/)
+        expect(logger).not_to have_received(:warn).with(/content_type is required/)
       end
 
       it 'emits a warn log when apollo_data_not_available' do
@@ -395,7 +405,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
       before do
         stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
         stub_const('Legion::Data::Model::ApolloAccessLog', mock_access_log_class)
-        allow(Legion::LLM::Embeddings).to receive(:generate)
+        allow(Legion::LLM::Call::Embeddings).to receive(:generate)
           .and_return({ vector: Array.new(1024, 0.0), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
         allow(mock_entry_class).to receive(:db).and_return(mock_db)
         allow(mock_db).to receive(:fetch).and_return(double(all: sample_entries))
@@ -430,7 +440,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
 
       before do
         stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
-        allow(Legion::LLM::Embeddings).to receive(:generate)
+        allow(Legion::LLM::Call::Embeddings).to receive(:generate)
           .and_return({ vector: Array.new(1024, 0.0), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
         allow(mock_entry_class).to receive(:db).and_return(mock_db)
         allow(mock_db).to receive(:fetch).and_return(double(all: []))
@@ -463,7 +473,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
       end
 
       it 'lists recent non-archived entries without generating an embedding' do
-        expect(Legion::LLM::Embeddings).not_to receive(:generate)
+        expect(Legion::LLM::Call::Embeddings).not_to receive(:generate)
 
         result = host.handle_query(query: 'x', limit: 50)
 
@@ -544,7 +554,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
 
       before do
         stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
-        allow(Legion::LLM::Embeddings).to receive(:generate)
+        allow(Legion::LLM::Call::Embeddings).to receive(:generate)
           .and_return({ vector: Array.new(1024, 0.0), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
         allow(mock_entry_class).to receive(:db).and_return(mock_db)
         allow(mock_db).to receive(:fetch).and_return(double(all: sample_entries))

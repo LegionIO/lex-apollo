@@ -7,6 +7,8 @@ module Legion
     module Apollo
       module Runners
         module Request
+          include Legion::Logging::Helper
+          extend Legion::Logging::Helper
           extend self
 
           def self.data_required?
@@ -83,6 +85,7 @@ module Legion
             Transport::Messages::Query.new(payload).publish
             { success: true, dispatched: :transport, payload: payload }
           rescue StandardError => e
+            handle_exception(e, level: :warn, operation: 'apollo.request.publish_query')
             { success: false, error: e.message }
           end
 
@@ -90,6 +93,7 @@ module Legion
             Transport::Messages::Ingest.new(payload).publish
             { success: true, dispatched: :transport, payload: payload }
           rescue StandardError => e
+            handle_exception(e, level: :warn, operation: 'apollo.request.publish_ingest')
             { success: false, error: e.message }
           end
         end
