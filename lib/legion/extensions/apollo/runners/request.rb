@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative '../helpers/data_models'
+
 module Legion
   module Extensions
     module Apollo
@@ -69,7 +71,7 @@ module Legion
           end
 
           def local_service_available?
-            defined?(Legion::Data::Model::ApolloEntry) &&
+            Helpers::DataModels.apollo_entry_available? &&
               defined?(Knowledge)
           end
 

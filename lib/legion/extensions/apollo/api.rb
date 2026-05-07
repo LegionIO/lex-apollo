@@ -3,6 +3,7 @@
 require 'sinatra/base' unless defined?(Sinatra)
 require 'legion/logging'
 require 'legion/json'
+require 'legion/extensions/apollo/helpers/data_models'
 
 module Legion
   module Extensions
@@ -12,9 +13,9 @@ module Legion
 
         class << self
           def stats_payload(now: Time.now)
-            return { error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
+            return { error: 'apollo_data_not_available' } unless Helpers::DataModels.apollo_entry_available?
 
-            entries = Legion::Data::Model::ApolloEntry
+            entries = Helpers::DataModels.apollo_entry
             by_status = grouped_counts(entries, :status)
             by_status['active'] = entries.exclude(status: 'archived').count
 
@@ -25,7 +26,7 @@ module Legion
               by_status:       by_status,
               by_content_type: grouped_counts(entries, :content_type)
             }
-            stats[:total_relations] = Legion::Data::Model::ApolloRelation.count if defined?(Legion::Data::Model::ApolloRelation)
+            stats[:total_relations] = Helpers::DataModels.apollo_relation.count if Helpers::DataModels.apollo_relation_available?
             stats
           end
 
@@ -78,7 +79,7 @@ module Legion
 
         # Health check
         get '/api/apollo/health' do
-          available = defined?(Legion::Data::Model::ApolloEntry) ? true : false
+          available = Helpers::DataModels.apollo_entry_available?
           json_dump(status: available ? 'ok' : 'degraded', data_available: available)
         end
 
