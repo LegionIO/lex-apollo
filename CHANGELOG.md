@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.24] - 2026-05-07
+
+### Fixed
+- Prevent zero-vector embeddings from being stored as valid semantic vectors when LLM embedding is unavailable.
+- Avoid self-referential corroboration relations, bound corroboration maintenance scans, and preserve valid decay age filtering.
+- Parse structured GAS LLM phase responses from `result[:data]` before falling back to JSON strings.
+- Make Apollo write-privilege memoization thread-safe.
+
 ## [0.4.23] - 2026-05-06
 
 ### Fixed
