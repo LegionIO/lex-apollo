@@ -9,6 +9,7 @@ module Legion
           extend Legion::Settings::Helper
 
           EMBEDDING_MODELS = %w[mxbai-embed-large bge-large snowflake-arctic-embed].freeze
+          PRIVILEGE_MUTEX = Mutex.new
 
           module_function
 
@@ -57,11 +58,13 @@ module Legion
           end
 
           def check_db_write_privilege
-            return @apollo_write_privilege unless @apollo_write_privilege.nil?
+            PRIVILEGE_MUTEX.synchronize do
+              return @apollo_write_privilege unless @apollo_write_privilege.nil?
 
-            @apollo_write_privilege = Legion::Data.connection
-                                                  .fetch("SELECT has_table_privilege(current_user, 'apollo_entries', 'INSERT') AS can_insert")
-                                                  .first[:can_insert] == true
+              @apollo_write_privilege = Legion::Data.connection
+                                                    .fetch("SELECT has_table_privilege(current_user, 'apollo_entries', 'INSERT') AS can_insert")
+                                                    .first[:can_insert] == true
+            end
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'apollo.capability.check_db_write_privilege')
             @apollo_write_privilege = false

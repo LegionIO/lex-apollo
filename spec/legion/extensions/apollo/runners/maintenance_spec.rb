@@ -107,9 +107,9 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Maintenance do
       before do
         stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
         allow(mock_entry_class).to receive(:where).with(status: 'candidate')
-                                                  .and_return(double(exclude: double(all: [])))
+                                                  .and_return(double(exclude: double(limit: double(all: []))))
         allow(mock_entry_class).to receive(:where).with(status: 'confirmed')
-                                                  .and_return(double(exclude: double(all: [])))
+                                                  .and_return(double(exclude: double(limit: double(all: []))))
       end
 
       it 'returns zero promoted and scanned' do
@@ -136,9 +136,9 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Maintenance do
         stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
         stub_const('Legion::Data::Model::ApolloRelation', mock_relation_class)
         allow(mock_entry_class).to receive(:where).with(status: 'candidate')
-                                                  .and_return(double(exclude: double(all: [candidate])))
+                                                  .and_return(double(exclude: double(limit: double(all: [candidate]))))
         allow(mock_entry_class).to receive(:where).with(status: 'confirmed')
-                                                  .and_return(double(exclude: double(all: [confirmed_entry])))
+                                                  .and_return(double(exclude: double(limit: double(all: [confirmed_entry]))))
         allow(mock_relation_class).to receive(:create)
       end
 
@@ -174,9 +174,9 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Maintenance do
         stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
         stub_const('Legion::Data::Model::ApolloRelation', mock_relation_class)
         allow(mock_entry_class).to receive(:where).with(status: 'candidate')
-                                                  .and_return(double(exclude: double(all: [candidate])))
+                                                  .and_return(double(exclude: double(limit: double(all: [candidate]))))
         allow(mock_entry_class).to receive(:where).with(status: 'confirmed')
-                                                  .and_return(double(exclude: double(all: [confirmed_entry])))
+                                                  .and_return(double(exclude: double(limit: double(all: [confirmed_entry]))))
       end
 
       it 'does not promote even with different providers' do
@@ -198,9 +198,9 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Maintenance do
       before do
         stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
         allow(mock_entry_class).to receive(:where).with(status: 'candidate')
-                                                  .and_return(double(exclude: double(all: [candidate])))
+                                                  .and_return(double(exclude: double(limit: double(all: [candidate]))))
         allow(mock_entry_class).to receive(:where).with(status: 'confirmed')
-                                                  .and_return(double(exclude: double(all: [confirmed_entry])))
+                                                  .and_return(double(exclude: double(limit: double(all: [confirmed_entry]))))
       end
 
       it 'does not promote' do

@@ -212,7 +212,7 @@ module Legion
             { from_content: fact[:content], to_id: entry[:id], relation_type: 'similar_to', confidence: fallback_confidence }
           end
 
-          def llm_classify_relation(fact, entry)
+          def llm_classify_relation(fact, entry) # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
             prompt = <<~PROMPT
               Classify the relationship between these two knowledge entries.
               Valid types: #{RELATION_TYPES.join(', ')}
@@ -245,9 +245,13 @@ module Legion
               phase:   'gas_relate'
             )
 
-            content = result.respond_to?(:message) ? result.message[:content] : result.to_s
-            parsed = json_load(content)
-            rels = parsed.is_a?(Hash) ? (parsed[:relations] || parsed['relations'] || []) : []
+            rels = if result.is_a?(Hash) && result[:data].is_a?(Hash)
+                     result[:data][:relations] || result.dig(:data, 'relations') || []
+                   else
+                     content = result.respond_to?(:message) ? result.message[:content] : result.to_s
+                     parsed = json_load(content)
+                     parsed.is_a?(Hash) ? (parsed[:relations] || parsed['relations'] || []) : []
+                   end
             best = rels.max_by { |r| r[:confidence] || r['confidence'] || 0 }
 
             return fallback_relation(fact, entry) unless best
@@ -302,9 +306,13 @@ module Legion
               phase:   'gas_synthesize'
             )
 
-            content = result.respond_to?(:message) ? result.message[:content] : result.to_s
-            parsed = json_load(content)
-            items = parsed.is_a?(Hash) ? (parsed[:synthesis] || parsed['synthesis'] || []) : []
+            items = if result.is_a?(Hash) && result[:data].is_a?(Hash)
+                      result[:data][:synthesis] || result.dig(:data, 'synthesis') || []
+                    else
+                      content = result.respond_to?(:message) ? result.message[:content] : result.to_s
+                      parsed = json_load(content)
+                      parsed.is_a?(Hash) ? (parsed[:synthesis] || parsed['synthesis'] || []) : []
+                    end
 
             items.map { |item| build_synthesis_entry(item, facts) }
           rescue StandardError => e
@@ -358,9 +366,13 @@ module Legion
               phase:   'gas_anticipate'
             )
 
-            content = result.respond_to?(:message) ? result.message[:content] : result.to_s
-            parsed = json_load(content)
-            questions = parsed.is_a?(Hash) ? (parsed[:questions] || parsed['questions'] || []) : []
+            questions = if result.is_a?(Hash) && result[:data].is_a?(Hash)
+                          result[:data][:questions] || result.dig(:data, 'questions') || []
+                        else
+                          content = result.respond_to?(:message) ? result.message[:content] : result.to_s
+                          parsed = json_load(content)
+                          parsed.is_a?(Hash) ? (parsed[:questions] || parsed['questions'] || []) : []
+                        end
             questions = questions.first(max_anticipations)
 
             questions.map do |q|
@@ -426,9 +438,13 @@ module Legion
               phase:   'gas_comprehend'
             )
 
-            content = result.respond_to?(:message) ? result.message[:content] : result.to_s
-            parsed = json_load(content)
-            facts_array = parsed.is_a?(Hash) ? (parsed[:facts] || parsed['facts'] || []) : Array(parsed)
+            facts_array = if result.is_a?(Hash) && result[:data].is_a?(Hash)
+                            result[:data][:facts] || result.dig(:data, 'facts') || []
+                          else
+                            content = result.respond_to?(:message) ? result.message[:content] : result.to_s
+                            parsed = json_load(content)
+                            parsed.is_a?(Hash) ? (parsed[:facts] || parsed['facts'] || []) : Array(parsed)
+                          end
             facts_array.map do |f|
               {
                 content:      f[:content] || f['content'],

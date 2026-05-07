@@ -14,7 +14,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Request do
 
     embeddings_mod = Module.new do
       def self.generate(*, **)
-        { vector: Array.new(1024, 0.0), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 }
+        { vector: Array.new(1024, 0.1), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 }
       end
     end
     stub_const('Legion::LLM::Call::Embeddings', embeddings_mod)
@@ -40,7 +40,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Request do
         stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
         stub_const('Legion::Data::Model::ApolloAccessLog', mock_access_log_class)
         allow(Legion::LLM::Call::Embeddings).to receive(:generate)
-          .and_return({ vector: Array.new(1024, 0.0), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
+          .and_return({ vector: Array.new(1024, 0.1), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
         allow(mock_entry_class).to receive(:db).and_return(mock_db)
         allow(mock_db).to receive(:fetch).and_return(double(all: sample_entries))
         allow(mock_entry_class).to receive(:where).and_return(double(update: true))
@@ -104,7 +104,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Request do
       before do
         stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
         allow(Legion::LLM::Call::Embeddings).to receive(:generate)
-          .and_return({ vector: Array.new(1024, 0.0), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
+          .and_return({ vector: Array.new(1024, 0.1), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
         allow(mock_entry_class).to receive(:db).and_return(mock_db)
         allow(mock_db).to receive(:fetch).and_return(double(all: []))
         allow(mock_entry_class).to receive(:where).and_return(double(update: true))
@@ -143,7 +143,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Request do
         stub_const('Legion::Data::Model::ApolloExpertise', mock_expertise_class)
         stub_const('Legion::Data::Model::ApolloAccessLog', mock_access_log_class)
         allow(Legion::LLM::Call::Embeddings).to receive(:generate)
-          .and_return({ vector: Array.new(1024, 0.0), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
+          .and_return({ vector: Array.new(1024, 0.1), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
         allow(mock_entry_class).to receive(:where).and_return(double(exclude: double(limit: double(each: nil), first: nil)))
         allow(mock_entry_class).to receive(:exclude)
           .and_return(double(exclude: double(limit: double(all: []))))

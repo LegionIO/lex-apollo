@@ -24,8 +24,9 @@ module Legion
           end
 
           def publishable?(insight)
-            (insight[:confidence] || 0) > PUBLISH_CONFIDENCE_THRESHOLD &&
-              (insight[:novelty] || 0) > PUBLISH_NOVELTY_THRESHOLD
+            confidence = (insight[:confidence] || 0).to_f
+            novelty = insight[:novelty] ? insight[:novelty].to_f : (1.0 - confidence)
+            confidence > PUBLISH_CONFIDENCE_THRESHOLD && novelty > PUBLISH_NOVELTY_THRESHOLD
           end
 
           def handle_mesh_departure(agent_id:)

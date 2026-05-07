@@ -43,7 +43,8 @@ module Legion
             )
 
             min_age_filter = Sequel.lit(
-              "COALESCE(updated_at, created_at) < NOW() - INTERVAL '? hours'", min_age_hours
+              "COALESCE(updated_at, created_at) < NOW() - (? * INTERVAL '1 hour')",
+              min_age_hours
             )
 
             decayed = conn[:apollo_entries]
@@ -71,8 +72,8 @@ module Legion
               return { success: false, error: 'apollo_data_not_available' }
             end
 
-            candidates = Helpers::DataModels.apollo_entry.where(status: 'candidate').exclude(embedding: nil).all
-            confirmed = Helpers::DataModels.apollo_entry.where(status: 'confirmed').exclude(embedding: nil).all
+            candidates = Helpers::DataModels.apollo_entry.where(status: 'candidate').exclude(embedding: nil).limit(100).all
+            confirmed = Helpers::DataModels.apollo_entry.where(status: 'confirmed').exclude(embedding: nil).limit(500).all
             log.debug("Apollo Maintenance.check_corroboration candidates=#{candidates.size} confirmed=#{confirmed.size}")
 
             promoted = 0
