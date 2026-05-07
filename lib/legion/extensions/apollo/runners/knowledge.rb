@@ -132,7 +132,7 @@ module Legion
             { success: false, error: e.message }
           end
 
-          def handle_query(query:, limit: Helpers::GraphQuery.default_query_limit, min_confidence: Helpers::GraphQuery.default_query_min_confidence, status: UNSET, tags: nil, domain: nil, agent_id: 'unknown', **) # rubocop:disable Layout/LineLength
+          def handle_query(query:, limit: Helpers::GraphQuery.default_query_limit, min_confidence: Helpers::GraphQuery.default_query_min_confidence, status: UNSET, tags: nil, domain: nil, agent_id: 'unknown', **) # rubocop:disable Layout/LineLength, Metrics/AbcSize, Metrics/CyclomaticComplexity
             return { success: false, error: 'apollo_data_not_available' } unless defined?(Legion::Data::Model::ApolloEntry)
 
             query = normalize_text_input(query)
@@ -145,6 +145,12 @@ module Legion
             end
 
             embedding = embed_text(query)
+            if embedding.nil?
+              log.warn('Apollo Knowledge.handle_query embedding unavailable; falling back to browse query')
+              return list_entries_chronologically(query: query, limit: limit, status: requested_status,
+                                                  status_defaulted: status_defaulted, tags: tags, domain: domain)
+            end
+
             sql = Helpers::GraphQuery.build_semantic_search_sql(
               limit: limit, min_confidence: min_confidence,
               statuses: Array(requested_status).map(&:to_s), tags: tags, domain: domain
@@ -263,6 +269,11 @@ module Legion
             return { success: true, entries: [], count: 0 } if query.nil? || query.to_s.strip.empty?
 
             embedding = embed_text(query)
+            if embedding.nil?
+              log.warn('Apollo Knowledge.retrieve_relevant embedding unavailable; returning empty result')
+              return { success: true, entries: [], count: 0, degraded: :no_embedding }
+            end
+
             sql = Helpers::GraphQuery.build_semantic_search_sql(
               limit: limit, min_confidence: min_confidence,
               statuses: %w[confirmed candidate], tags: tags, domain: domain
@@ -380,16 +391,16 @@ module Legion
             log.debug("Apollo Knowledge.embed_text text_length=#{text.length}")
             result = Legion::LLM::Call::Embeddings.generate(text: text)
             vector = result.is_a?(Hash) ? result[:vector] : result
-            if vector.is_a?(Array) && vector.any?
+            if vector.is_a?(Array) && vector.any? && vector.any? { |v| v != 0.0 }
               log.debug("Apollo Knowledge.embed_text vector_dimensions=#{vector.length}")
               vector
             else
-              log.warn('Apollo Knowledge.embed_text returned no vector; using zero-vector fallback')
-              Array.new(1024, 0.0)
+              log.warn('Apollo Knowledge.embed_text returned no usable vector; skipping embedding')
+              nil
             end
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'apollo.knowledge.embed_text')
-            Array.new(1024, 0.0)
+            nil
           end
 
           def normalize_text_input(value)
@@ -462,7 +473,7 @@ module Legion
               submitted_by:     metadata[:submitted_by],
               submitted_from:   metadata[:submitted_from],
               content_hash:     content_hash,
-              embedding:        Sequel.lit("'[#{embedding.join(',')}]'::vector")
+              embedding:        embedding ? Sequel.lit("'[#{embedding.join(',')}]'::vector") : nil
             )
             log.info("Apollo Knowledge.handle_ingest created entry_id=#{new_entry.id} status=candidate domain=#{metadata[:domain]} source_agent=#{metadata[:source_agent]}") # rubocop:disable Layout/LineLength
             new_entry.id
@@ -570,6 +581,8 @@ module Legion
           end
 
           def find_corroboration(embedding, content_type_sym, source_agent, source_channel = nil)
+            return [false, nil] unless embedding
+
             scan_limit = Helpers::Confidence.apollo_setting(:corroboration, :scan_limit, default: 50)
             log.debug("Apollo Knowledge.find_corroboration content_type=#{content_type_sym} source_agent=#{source_agent} source_channel=#{source_channel || 'nil'} scan_limit=#{scan_limit}") # rubocop:disable Layout/LineLength
             existing = Legion::Data::Model::ApolloEntry
@@ -596,13 +609,6 @@ module Legion
               entry.update(
                 confidence: Helpers::Confidence.apply_corroboration_boost(confidence: entry.confidence, weight: weight),
                 updated_at: Time.now
-              )
-              Legion::Data::Model::ApolloRelation.create(
-                from_entry_id: entry.id,
-                to_entry_id:   entry.id,
-                relation_type: 'similar_to',
-                source_agent:  source_agent,
-                weight:        sim
               )
               log.info("Apollo Knowledge.find_corroboration matched entry_id=#{entry.id} source_agent=#{source_agent} similarity=#{sim}")
               return [true, entry.id]
