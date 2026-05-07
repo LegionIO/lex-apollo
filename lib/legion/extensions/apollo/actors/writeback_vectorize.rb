@@ -15,7 +15,7 @@ module Legion
           def handle_vectorize(payload)
             payload = symbolize(payload)
             log.debug("WritebackVectorize handle_vectorize content_length=#{payload[:content].to_s.length} content_type=#{payload[:content_type] || 'nil'}")
-            result = Legion::LLM::Embeddings.generate(text: payload[:content])
+            result = Legion::LLM::Call::Embeddings.generate(text: payload[:content])
             vector = result.is_a?(Hash) ? result[:vector] : result
             embedding = vector.is_a?(Array) && vector.any? ? vector : Array.new(1024, 0.0)
             log.debug("WritebackVectorize embedding_dimensions=#{embedding.length} vector_generated=#{vector.is_a?(Array) && vector.any?}")
@@ -41,7 +41,7 @@ module Legion
           def enabled? # rubocop:disable Legion/Extension/ActorEnabledSideEffects
             Legion.const_defined?(:Transport, false) && Helpers::Capability.can_embed?
           rescue StandardError => e
-            log.warn("WritebackVectorize enabled? check failed: #{e.message}")
+            handle_exception(e, level: :warn, operation: 'apollo.writeback_vectorize.enabled')
             false
           end
 

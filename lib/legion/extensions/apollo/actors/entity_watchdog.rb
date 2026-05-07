@@ -11,6 +11,7 @@ module Legion
         class EntityWatchdog < Legion::Extensions::Actors::Every
           include Legion::Extensions::Apollo::Runners::Knowledge
           include Legion::Extensions::Apollo::Runners::EntityExtractor
+          include Legion::Settings::Helper
 
           DEDUP_THRESHOLD_DEFAULT   = 0.92
           TASK_LOG_LOOKBACK_SECONDS = 300
@@ -18,7 +19,7 @@ module Legion
 
           def runner_class    = self.class
           def runner_function = 'scan_and_ingest'
-          def time            = (defined?(Legion::Settings) && Legion::Settings.dig(:apollo, :actors, :entity_watchdog_interval)) || 120
+          def time            = settings[:actors][:entity_watchdog_interval]
           def run_now?        = false
           def use_runner?     = false
           def check_subtask?  = false
@@ -28,7 +29,7 @@ module Legion
             defined?(Legion::Extensions::Apollo::Runners::EntityExtractor) &&
               Legion.const_defined?(:Transport, false)
           rescue StandardError => e
-            log.warn("EntityWatchdog enabled? check failed: #{e.message}")
+            handle_exception(e, level: :warn, operation: 'apollo.entity_watchdog.enabled')
             false
           end
 
@@ -64,8 +65,8 @@ module Legion
           def recent_task_log_texts
             return [] unless defined?(Legion::Data) && defined?(Legion::Data::Model::TaskLog)
 
-            lookback = (defined?(Legion::Settings) && Legion::Settings.dig(:apollo, :entity_watchdog, :lookback_seconds)) || TASK_LOG_LOOKBACK_SECONDS
-            log_limit = (defined?(Legion::Settings) && Legion::Settings.dig(:apollo, :entity_watchdog, :log_limit)) || TASK_LOG_LIMIT
+            lookback = settings[:entity_watchdog][:lookback_seconds]
+            log_limit = settings[:entity_watchdog][:log_limit]
             cutoff = Time.now - lookback
             logs = Legion::Data::Model::TaskLog
                    .where { created_at >= cutoff }
@@ -76,7 +77,7 @@ module Legion
             log.debug("EntityWatchdog recent_task_log_texts lookback=#{lookback} limit=#{log_limit} raw=#{logs.size} unique=#{texts.size}")
             texts
           rescue StandardError => e
-            log.warn("EntityWatchdog recent_task_log_texts failed: #{e.message}")
+            handle_exception(e, level: :warn, operation: 'apollo.entity_watchdog.recent_task_log_texts')
             []
           end
 
@@ -93,7 +94,7 @@ module Legion
             distance = closest[:distance].to_f
             distance <= (1.0 - dedup_similarity_threshold)
           rescue StandardError => e
-            log.warn("EntityWatchdog entity_exists_in_apollo? failed: #{e.message}")
+            handle_exception(e, level: :warn, operation: 'apollo.entity_watchdog.entity_exists_in_apollo')
             false
           end
 
@@ -113,27 +114,15 @@ module Legion
           end
 
           def entity_types
-            if defined?(Legion::Settings)
-              types = Legion::Settings.dig(:apollo, :entity_watchdog, :types)
-              return Array(types).map(&:to_s) if types
-            end
-            %w[person service repository concept]
+            Array(settings[:entity_watchdog][:types]).map(&:to_s)
           end
 
           def min_entity_confidence
-            if defined?(Legion::Settings)
-              val = Legion::Settings.dig(:apollo, :entity_watchdog, :min_confidence)
-              return val.to_f if val
-            end
-            0.7
+            settings[:entity_watchdog][:min_confidence].to_f
           end
 
           def dedup_similarity_threshold
-            if defined?(Legion::Settings)
-              val = Legion::Settings.dig(:apollo, :entity_watchdog, :dedup_threshold)
-              return val.to_f if val
-            end
-            DEDUP_THRESHOLD_DEFAULT
+            settings[:entity_watchdog][:dedup_threshold].to_f
           end
         end
       end

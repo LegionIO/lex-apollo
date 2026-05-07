@@ -39,17 +39,6 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Gas, '.phase_synthesize' do
     before do
       stub_const('Legion::LLM::Pipeline::GaiaCaller', gaia_caller)
       allow(gaia_caller).to receive(:structured).and_return(mock_response)
-      allow(Legion::JSON).to receive(:load).and_return(
-        {
-          'synthesis' => [
-            {
-              'content'        => 'pgvector achieves fast similarity search through HNSW logarithmic indexing',
-              'content_type'   => 'inference',
-              'source_indices' => [0, 1]
-            }
-          ]
-        }
-      )
     end
 
     it 'generates derivative knowledge entries' do

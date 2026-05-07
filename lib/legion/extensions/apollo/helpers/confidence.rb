@@ -5,6 +5,9 @@ module Legion
     module Apollo
       module Helpers
         module Confidence
+          extend Legion::Logging::Helper
+          extend Legion::Settings::Helper
+
           INITIAL_CONFIDENCE = 0.5
           CORROBORATION_BOOST = 0.3
           RETRIEVAL_BOOST = 0.02
@@ -21,16 +24,10 @@ module Legion
 
           module_function
 
-          def log
-            Legion::Logging
-          end
-
           def apollo_setting(*keys, default:)
-            return default unless defined?(Legion::Settings) && !Legion::Settings[:apollo].nil?
-
-            Legion::Settings[:apollo].dig(*keys) || default
+            settings.dig(*keys)
           rescue StandardError => e
-            log.warn("Apollo Confidence.apollo_setting failed: #{e.message}")
+            handle_exception(e, level: :warn, operation: 'apollo.confidence.apollo_setting', keys: keys)
             default
           end
 

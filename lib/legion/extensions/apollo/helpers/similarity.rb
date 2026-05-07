@@ -7,11 +7,10 @@ module Legion
     module Apollo
       module Helpers
         module Similarity
-          module_function
+          extend Legion::Logging::Helper
+          extend Legion::JSON::Helper
 
-          def log
-            Legion::Logging
-          end
+          module_function
 
           def cosine_similarity(vec_a:, vec_b:, **)
             vec_a = parse_vector(vec_a)
@@ -30,9 +29,9 @@ module Legion
             return vec if vec.is_a?(Array)
             return nil unless vec.is_a?(String)
 
-            ::JSON.parse(vec)
+            json_parse(vec)
           rescue StandardError => e
-            log.warn("Apollo Similarity.parse_vector failed: #{e.message}")
+            handle_exception(e, level: :warn, operation: 'apollo.similarity.parse_vector')
             nil
           end
 

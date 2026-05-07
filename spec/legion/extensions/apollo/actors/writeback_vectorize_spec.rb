@@ -53,7 +53,7 @@ RSpec.describe Legion::Extensions::Apollo::Actor::WritebackVectorize do
         { vector: Array.new(1024, 0.1), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 }
       end
     end
-    stub_const('Legion::LLM::Embeddings', embeddings_mod)
+    stub_const('Legion::LLM::Call::Embeddings', embeddings_mod)
   end
 
   describe '#runner_function' do
@@ -66,7 +66,7 @@ RSpec.describe Legion::Extensions::Apollo::Actor::WritebackVectorize do
     let(:payload) { { content: 'test content', content_type: 'observation', tags: %w[test] } }
 
     before do
-      allow(Legion::LLM::Embeddings).to receive(:generate)
+      allow(Legion::LLM::Call::Embeddings).to receive(:generate)
         .and_return({ vector: [0.1] * 1024, model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
       allow(Legion::Extensions::Apollo::Helpers::Capability).to receive(:can_write?).and_return(false)
     end
@@ -92,7 +92,7 @@ RSpec.describe Legion::Extensions::Apollo::Actor::WritebackVectorize do
     end
 
     it 'returns error hash on failure' do
-      allow(Legion::LLM::Embeddings).to receive(:generate).and_raise(RuntimeError, 'boom')
+      allow(Legion::LLM::Call::Embeddings).to receive(:generate).and_raise(RuntimeError, 'boom')
 
       result = actor.handle_vectorize(payload)
       expect(result[:success]).to be false

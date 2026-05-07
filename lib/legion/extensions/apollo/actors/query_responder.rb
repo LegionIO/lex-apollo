@@ -16,7 +16,7 @@ module Legion
             defined?(Legion::Extensions::Apollo::Runners::Knowledge) &&
               Legion.const_defined?(:Transport, false)
           rescue StandardError => e
-            log.warn("QueryResponder enabled? check failed: #{e.message}")
+            handle_exception(e, level: :warn, operation: 'apollo.query_responder.enabled')
             false
           end
         end

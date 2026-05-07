@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.23] - 2026-05-06
+
+### Changed
+- Apollo defaults are now declared directly in `Apollo.default_settings`, and Apollo helpers, runners, actors, and API paths use `Legion::Logging::Helper`, `Legion::Settings::Helper`, and `Legion::JSON` helper methods instead of direct logging/settings/JSON calls.
+
 ## [0.4.22] - 2026-04-28
 
 ### Fixed

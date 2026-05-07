@@ -67,7 +67,6 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Gas, '.phase_relate' do
 
       before do
         stub_const('Legion::LLM::Pipeline::GaiaCaller', gaia_caller)
-        stub_const('Legion::JSON', double(load: { 'relations' => [{ 'relation_type' => 'depends_on', 'confidence' => 0.85 }] }))
         allow(gaia_caller).to receive(:structured).and_return(mock_response)
       end
 
@@ -85,9 +84,6 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Gas, '.phase_relate' do
           }
         )
         allow(gaia_caller).to receive(:structured).and_return(low_conf_response)
-        allow(Legion::JSON).to receive(:load).and_return(
-          { 'relations' => [{ 'relation_type' => 'contradicts', 'confidence' => 0.3 }] }
-        )
 
         result = described_class.phase_relate(facts, entities)
         # Low confidence relations should fall back to similar_to

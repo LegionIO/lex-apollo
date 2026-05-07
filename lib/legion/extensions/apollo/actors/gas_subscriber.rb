@@ -17,7 +17,7 @@ module Legion
             defined?(Legion::Extensions::Apollo::Runners::Gas) &&
               Legion.const_defined?(:Transport, false)
           rescue StandardError => e
-            log.warn("GasSubscriber enabled? check failed: #{e.message}")
+            handle_exception(e, level: :warn, operation: 'apollo.gas_subscriber.enabled')
             false
           end
 
