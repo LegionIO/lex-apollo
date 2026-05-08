@@ -67,6 +67,13 @@ RSpec.describe Legion::Extensions::Apollo::Actor::EntityWatchdog do
       expect(actor).to have_received(:publish_entity_ingest).once
     end
 
+    it 'does not extract entities from the same task log text twice' do
+      actor.scan_and_ingest
+      actor.scan_and_ingest
+
+      expect(actor).to have_received(:extract_entities).once
+    end
+
     context 'when entity already exists in Apollo (high similarity)' do
       let(:existing_match) do
         { success: true, entries: [{ id: 42, content: 'lex-synapse', distance: 0.02 }], count: 1 }

@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'digest'
 require 'legion/extensions/actors/every'
 require_relative '../runners/knowledge'
 require_relative '../runners/entity_extractor'
@@ -40,6 +41,8 @@ module Legion
 
             ingested = 0
             texts.each do |text|
+              next if task_log_text_processed?(text)
+
               result = extract_entities(
                 text:           text,
                 entity_types:   entity_types,
@@ -47,6 +50,7 @@ module Legion
               )
               next unless result[:success]
 
+              mark_task_log_text_processed(text) unless result[:source] == :unavailable
               result[:entities].each do |entity|
                 next if entity_exists_in_apollo?(entity)
 
@@ -123,6 +127,28 @@ module Legion
 
           def dedup_similarity_threshold
             settings[:entity_watchdog][:dedup_threshold].to_f
+          end
+
+          def task_log_text_processed?(text)
+            processed_task_log_hashes.key?(task_log_text_hash(text))
+          end
+
+          def mark_task_log_text_processed(text)
+            hashes = processed_task_log_hashes
+            hashes[task_log_text_hash(text)] = true
+            hashes.shift while hashes.size > processed_task_log_hash_limit
+          end
+
+          def processed_task_log_hashes
+            @processed_task_log_hashes ||= {}
+          end
+
+          def processed_task_log_hash_limit
+            [settings[:entity_watchdog][:log_limit].to_i * 4, 100].max
+          end
+
+          def task_log_text_hash(text)
+            Digest::SHA256.hexdigest(text.to_s)
           end
         end
       end
