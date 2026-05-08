@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.25] - 2026-05-08
+
+### Fixed
+- Entity watchdog now remembers processed task-log text during the process lifetime so unchanged logs do not trigger repeated structured LLM extraction on every watchdog interval.
+
 ## [0.4.24] - 2026-05-07
 
 ### Fixed
