@@ -469,6 +469,22 @@ module Legion
             )
             log.info("Apollo Knowledge.handle_ingest created entry_id=#{new_entry.id} status=candidate domain=#{metadata[:domain]} source_agent=#{metadata[:source_agent]}") # rubocop:disable Layout/LineLength
             new_entry.id
+          rescue Sequel::UniqueConstraintViolation => e
+            # Race condition: another thread/process inserted the same content_hash between our
+            # dedup check and this insert. Fetch and return the winner's id so the caller can
+            # continue normally (access log, contradiction detection, etc.).
+            winner = Helpers::DataModels.apollo_entry
+                                        .where(content_hash: content_hash)
+                                        .exclude(status: 'archived')
+                                        .first
+            if winner
+              log.warn("Apollo Knowledge.create_candidate_entry race_dedup entry_id=#{winner.id} content_hash=#{content_hash} source_agent=#{metadata[:source_agent]}") # rubocop:disable Layout/LineLength
+              winner.id
+            else
+              handle_exception(e, level: :warn, handled: true, operation: 'apollo.knowledge.create_candidate_entry',
+                                  content_hash: content_hash)
+              nil
+            end
           end
 
           def browse_query?(query)

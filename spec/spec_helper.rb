@@ -13,6 +13,7 @@ require 'legion/transport'
 unless defined?(Sequel)
   module Sequel
     class Error < StandardError; end
+    class UniqueConstraintViolation < Error; end
 
     def self.pg_array(arr) = arr
     def self.lit(str, *) = str

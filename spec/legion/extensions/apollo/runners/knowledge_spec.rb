@@ -321,6 +321,30 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
           expect(result[:deduped]).to be true
           expect(result[:entry_id]).to eq('uuid-existing')
         end
+
+        it 'recovers gracefully when a concurrent ingest wins the content_hash unique constraint race' do
+          # Simulate: dedup check passes (nil — no existing entry yet), then .create
+          # raises UniqueConstraintViolation (another thread inserted between check and insert).
+          # create_candidate_entry must rescue and return the existing entry's id so the
+          # caller succeeds rather than propagating a database error.
+          race_entry = double('race_entry', id: 'uuid-race-winner')
+
+          allow(mock_entry_class).to receive(:create)
+            .and_raise(Sequel::UniqueConstraintViolation, 'duplicate key value violates unique constraint "idx_apollo_content_hash"')
+
+          collision_dataset = double('collision_dataset')
+          allow(mock_entry_class).to receive(:where).with(content_hash: anything).and_return(collision_dataset)
+          allow(collision_dataset).to receive(:exclude).with(status: 'archived').and_return(collision_dataset)
+          # First call: dedup pre-check returns nil (not yet in DB).
+          # Second call: post-collision lookup returns the winner inserted by the other thread.
+          allow(collision_dataset).to receive(:first).and_return(nil, race_entry)
+
+          result = host.handle_ingest(content: 'concurrent content', content_type: 'fact',
+                                      source_agent: 'agent-1',
+                                      content_hash: 'd3861b2862454c5a6a9e480829333841')
+          expect(result[:success]).to be true
+          expect(result[:entry_id]).to eq('uuid-race-winner')
+        end
       end
     end
 
