@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.26] - 2026-05-11
+
+### Fixed
+- Handle `Sequel::UniqueConstraintViolation` in `create_candidate_entry` gracefully — a race condition during concurrent knowledge ingestion can cause two threads to pass the content_hash dedup check simultaneously and both attempt to insert the same row. On collision, the rescue block now looks up the existing winner row by content_hash (excluding archived) and returns its ID so the caller continues normally (access log, contradiction detection, etc.) instead of propagating a database error.
+- Added `Sequel::UniqueConstraintViolation` stub to the test-only Sequel shim so the race-condition rescue path is exercisable in unit tests without a live database.
+
 ## [0.4.25] - 2026-05-08
 
 ### Fixed
