@@ -481,8 +481,9 @@ module Legion
               log.warn("Apollo Knowledge.create_candidate_entry race_dedup entry_id=#{winner.id} content_hash=#{content_hash} source_agent=#{metadata[:source_agent]}") # rubocop:disable Layout/LineLength
               winner.id
             else
-              handle_exception(e, level: :error, operation: 'apollo.knowledge.create_candidate_entry')
-              raise
+              handle_exception(e, level: :warn, handled: true, operation: 'apollo.knowledge.create_candidate_entry',
+                                  content_hash: content_hash)
+              nil
             end
           end
 
