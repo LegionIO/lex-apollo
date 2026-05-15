@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.27] - 2026-05-15
+
+### Added
+- `handle_ingest` now accepts and persists `access_scope`, `identity_principal_id`, `identity_id`, and `identity_canonical_name` to `apollo_entries`. These kwargs are injected automatically by `legion-apollo`'s identity middleware; no callers need updating. Defaults to `access_scope: 'global'` for backward compatibility.
+- `build_semantic_search_sql` accepts an optional `requesting_principal_id:` kwarg and adds an access-scope SQL filter when provided: `global` entries are always visible, `team` entries are visible when the requesting principal shares a group membership with the submitter, and `private` entries are visible only to the owning principal (checked via both `identity_principal_id` FK and an `identities` subquery for multi-provider auth).
+- `handle_query` and `retrieve_relevant` both accept and forward `requesting_principal_id:` to the SQL builder — covers the GAIA path (`handle_query`) and the direct-call path (`retrieve_relevant`).
+- Browse-mode fallback in `handle_query` (`list_entries_chronologically`) also applies the same access-scope filter when `requesting_principal_id:` is provided.
+- Private-entry dedup guard in `active_duplicate_for_hash`: when `access_scope: 'private'` and `identity_principal_id` is set, the dedup query is scoped per-principal so two different principals writing identical content each get their own row.
+
+### Fixed
+- `handle_erasure_request` now clears `identity_principal_id`, `identity_id`, and `identity_canonical_name` on confirmed (redacted) entries in addition to the existing `source_agent`/`source_provider`/`source_channel` redaction — GDPR right-to-erasure compliance gap.
+
 ## [0.4.26] - 2026-05-11
 
 ### Fixed
