@@ -610,6 +610,37 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         expect(dataset).to have_received(:where).with(knowledge_domain: 'general')
       end
     end
+
+    context 'access scope forwarding' do
+      let(:mock_entry_class) { double('ApolloEntry') }
+      let(:mock_db) { double('db') }
+
+      before do
+        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
+        allow(Legion::LLM::Call::Embeddings).to receive(:generate)
+          .and_return({ vector: Array.new(1024, 0.1), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
+        allow(mock_entry_class).to receive(:db).and_return(mock_db)
+        allow(mock_db).to receive(:fetch).and_return(double(all: []))
+        allow(mock_entry_class).to receive(:where).and_return(double(update: true))
+      end
+
+      it 'forwards requesting_principal_id to build_semantic_search_sql' do
+        expect(Legion::Extensions::Apollo::Helpers::GraphQuery).to receive(:build_semantic_search_sql).with(
+          hash_including(requesting_principal_id: 42)
+        ).and_return('SELECT 1')
+        allow(mock_db).to receive(:fetch).and_return(double(all: []))
+
+        host.handle_query(query: 'test', requesting_principal_id: 42)
+      end
+
+      it 'passes nil requesting_principal_id when not provided (no filter)' do
+        expect(Legion::Extensions::Apollo::Helpers::GraphQuery).to receive(:build_semantic_search_sql).with(
+          hash_including(requesting_principal_id: nil)
+        ).and_return('SELECT 1')
+
+        host.handle_query(query: 'test')
+      end
+    end
   end
 
   describe '#normalize_text_input' do
@@ -685,6 +716,14 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
           hash_including(domain: 'clinical')
         ).and_call_original
         host.retrieve_relevant(query: 'treatment', domain: 'clinical')
+      end
+
+      it 'forwards requesting_principal_id to build_semantic_search_sql' do
+        expect(Legion::Extensions::Apollo::Helpers::GraphQuery).to receive(:build_semantic_search_sql).with(
+          hash_including(requesting_principal_id: 7)
+        ).and_return('SELECT 1')
+
+        host.retrieve_relevant(query: 'test', requesting_principal_id: 7)
       end
     end
   end

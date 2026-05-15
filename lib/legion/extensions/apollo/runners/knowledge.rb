@@ -142,7 +142,10 @@ module Legion
             { success: false, error: e.message }
           end
 
-          def handle_query(query:, limit: Helpers::GraphQuery.default_query_limit, min_confidence: Helpers::GraphQuery.default_query_min_confidence, status: UNSET, tags: nil, domain: nil, agent_id: 'unknown', **) # rubocop:disable Layout/LineLength, Metrics/CyclomaticComplexity
+          def handle_query(query:, limit: Helpers::GraphQuery.default_query_limit, # rubocop:disable Metrics/CyclomaticComplexity, Metrics/ParameterLists
+                           min_confidence: Helpers::GraphQuery.default_query_min_confidence,
+                           status: UNSET, tags: nil, domain: nil, agent_id: 'unknown',
+                           requesting_principal_id: nil, **)
             return { success: false, error: 'apollo_data_not_available' } unless Helpers::DataModels.apollo_entry_available?
 
             entry_model = Helpers::DataModels.apollo_entry
@@ -152,19 +155,22 @@ module Legion
             log.debug("Apollo Knowledge.handle_query mode=#{browse_query?(query) ? 'browse' : 'semantic'} query_length=#{query.length} limit=#{limit} statuses=#{Array(requested_status).join(',')} status_defaulted=#{status_defaulted} tags=#{Array(tags).size} domain=#{domain || 'nil'} agent_id=#{agent_id}") # rubocop:disable Layout/LineLength
             if browse_query?(query)
               return list_entries_chronologically(query: query, limit: limit, status: requested_status,
-                                                  status_defaulted: status_defaulted, tags: tags, domain: domain)
+                                                  status_defaulted: status_defaulted, tags: tags, domain: domain,
+                                                  requesting_principal_id: requesting_principal_id)
             end
 
             embedding = embed_text(query)
             if embedding.nil?
               log.warn('Apollo Knowledge.handle_query embedding unavailable; falling back to browse query')
               return list_entries_chronologically(query: query, limit: limit, status: requested_status,
-                                                  status_defaulted: status_defaulted, tags: tags, domain: domain)
+                                                  status_defaulted: status_defaulted, tags: tags, domain: domain,
+                                                  requesting_principal_id: requesting_principal_id)
             end
 
             sql = Helpers::GraphQuery.build_semantic_search_sql(
               limit: limit, min_confidence: min_confidence,
-              statuses: Array(requested_status).map(&:to_s), tags: tags, domain: domain
+              statuses: Array(requested_status).map(&:to_s), tags: tags, domain: domain,
+              requesting_principal_id: requesting_principal_id
             )
 
             db = entry_model.db
@@ -260,7 +266,9 @@ module Legion
             { success: false, error: e.message }
           end
 
-          def retrieve_relevant(query: nil, limit: Helpers::Confidence.apollo_setting(:query, :retrieval_limit, default: 5), min_confidence: Helpers::GraphQuery.default_query_min_confidence, tags: nil, domain: nil, skip: false, **) # rubocop:disable Layout/LineLength
+          def retrieve_relevant(query: nil, limit: Helpers::Confidence.apollo_setting(:query, :retrieval_limit, default: 5),
+                                min_confidence: Helpers::GraphQuery.default_query_min_confidence,
+                                tags: nil, domain: nil, skip: false, requesting_principal_id: nil, **)
             return { status: :skipped } if skip
 
             return { success: false, error: 'apollo_data_not_available' } unless Helpers::DataModels.apollo_entry_available?
@@ -277,7 +285,8 @@ module Legion
 
             sql = Helpers::GraphQuery.build_semantic_search_sql(
               limit: limit, min_confidence: min_confidence,
-              statuses: %w[confirmed candidate], tags: tags, domain: domain
+              statuses: %w[confirmed candidate], tags: tags, domain: domain,
+              requesting_principal_id: requesting_principal_id
             )
 
             db = Helpers::DataModels.apollo_entry.db
@@ -513,13 +522,25 @@ module Legion
             query.to_s.strip.length < 3
           end
 
-          def list_entries_chronologically(query:, limit:, status:, status_defaulted:, tags:, domain:)
+          def list_entries_chronologically(query:, limit:, status:, status_defaulted:, tags:, domain:, requesting_principal_id: nil)
             log.debug("Apollo Knowledge.list_entries_chronologically limit=#{limit} statuses=#{Array(status).join(',')} status_defaulted=#{status_defaulted} tags=#{Array(tags).size} domain=#{domain || 'nil'}") # rubocop:disable Layout/LineLength
             dataset = Helpers::DataModels.apollo_entry.exclude(status: 'archived')
             requested = Array(status).map(&:to_s).reject(&:empty?)
             dataset = dataset.where(status: requested) unless status_defaulted || requested.empty?
             dataset = dataset.where(Sequel.lit('tags && ?', Sequel.pg_array(Array(tags)))) if tags && !Array(tags).empty?
             dataset = dataset.where(knowledge_domain: domain) if domain && !domain.to_s.empty?
+
+            if requesting_principal_id
+              pid = requesting_principal_id.to_i
+              dataset = dataset.where(
+                Sequel.lit(
+                  "(access_scope = 'global' " \
+                  "OR (access_scope = 'private' AND (identity_principal_id = ? OR identity_id IN (SELECT id FROM identities WHERE principal_id = ?))) " \
+                  "OR (access_scope = 'team' AND EXISTS (SELECT 1 FROM identity_group_memberships igm1 JOIN identity_group_memberships igm2 ON igm1.group_id = igm2.group_id WHERE igm1.principal_id = ? AND igm2.principal_id = identity_principal_id)))", # rubocop:disable Layout/LineLength
+                  pid, pid, pid
+                )
+              )
+            end
 
             entries = dataset.order(Sequel.desc(:created_at)).limit(limit).all.map do |entry|
               format_entry(entry.is_a?(Hash) ? entry : entry.values)
