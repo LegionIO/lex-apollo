@@ -359,10 +359,16 @@ module Legion
                       .exclude(status: 'confirmed')
                       .delete
 
-            # Redact attribution on confirmed entries (corroborated, retain knowledge)
             redacted = conn[:apollo_entries]
                        .where(source_agent: agent_id, status: 'confirmed')
-                       .update(source_agent: 'redacted', source_provider: nil, source_channel: nil)
+                       .update(
+                         source_agent:            'redacted',
+                         source_provider:         nil,
+                         source_channel:          nil,
+                         identity_principal_id:   nil,
+                         identity_id:             nil,
+                         identity_canonical_name: nil
+                       )
 
             { deleted: deleted, redacted: redacted, agent_id: agent_id }
               .tap { |result| log.info("Apollo Knowledge.handle_erasure_request deleted=#{result[:deleted]} redacted=#{result[:redacted]} agent_id=#{agent_id}") } # rubocop:disable Layout/LineLength

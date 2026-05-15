@@ -994,6 +994,18 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         expect(result[:redacted]).to eq(2)
         expect(result[:agent_id]).to eq('agent-dead')
       end
+
+      it 'clears identity columns on confirmed (redacted) entries' do
+        expect(mock_dataset).to receive(:update).with(
+          hash_including(
+            identity_principal_id:   nil,
+            identity_id:             nil,
+            identity_canonical_name: nil
+          )
+        ).and_return(2)
+
+        host.handle_erasure_request(agent_id: 'agent-dead')
+      end
     end
 
     context 'when Sequel raises an error' do
