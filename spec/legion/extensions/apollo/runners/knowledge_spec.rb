@@ -371,6 +371,95 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
       end
     end
 
+    context 'identity kwargs persistence' do
+      let(:mock_entry_class2) { double('ApolloEntry2') }
+      let(:mock_expertise_class2) { double('ApolloExpertise2') }
+      let(:mock_access_log_class2) { double('ApolloAccessLog2') }
+      let(:mock_entry2) { double('entry2', id: 99, embedding: nil) }
+
+      before do
+        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class2)
+        stub_const('Legion::Data::Model::ApolloExpertise', mock_expertise_class2)
+        stub_const('Legion::Data::Model::ApolloAccessLog', mock_access_log_class2)
+        scoped_ds = double('scoped_ds2', first: nil, where: double('scoped_ds2b', first: nil))
+        allow(mock_entry_class2).to receive(:where).and_return(scoped_ds)
+        allow(scoped_ds).to receive(:exclude).and_return(scoped_ds)
+        allow(mock_expertise_class2).to receive(:where).and_return(double(first: nil))
+        allow(mock_expertise_class2).to receive(:create)
+        allow(mock_access_log_class2).to receive(:create)
+        allow(host).to receive(:embed_text).and_return(nil)
+        allow(host).to receive(:find_corroboration).and_return([false, nil])
+        allow(host).to receive(:detect_contradictions).and_return([])
+      end
+
+      it 'passes identity_principal_id and access_scope through to create_candidate_entry' do
+        expect(mock_entry_class2).to receive(:create).with(
+          hash_including(identity_principal_id: 42, access_scope: 'private')
+        ).and_return(mock_entry2)
+
+        host.handle_ingest(
+          content: 'test fact', tags: [],
+          identity_principal_id: 42, identity_id: 7, identity_canonical_name: 'alice',
+          access_scope: 'private'
+        )
+      end
+
+      it 'defaults access_scope to global when not provided' do
+        expect(mock_entry_class2).to receive(:create).with(
+          hash_including(access_scope: 'global')
+        ).and_return(mock_entry2)
+
+        host.handle_ingest(content: 'test fact', tags: [])
+      end
+
+      it 'persists identity_id and identity_canonical_name' do
+        expect(mock_entry_class2).to receive(:create).with(
+          hash_including(identity_id: 7, identity_canonical_name: 'alice')
+        ).and_return(mock_entry2)
+
+        host.handle_ingest(
+          content: 'test fact', tags: [],
+          identity_principal_id: 42, identity_id: 7, identity_canonical_name: 'alice',
+          access_scope: 'private'
+        )
+      end
+    end
+
+    context 'dedup: private entries from different principals are not deduplicated' do
+      let(:mock_entry_class3) { double('ApolloEntry3') }
+      let(:mock_expertise_class3) { double('ApolloExpertise3') }
+      let(:mock_access_log_class3) { double('ApolloAccessLog3') }
+      let(:mock_entry_a) { double('entry_a', id: 7, embedding: nil) }
+      let(:mock_entry_b) { double('entry_b', id: 8, embedding: nil) }
+
+      before do
+        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class3)
+        stub_const('Legion::Data::Model::ApolloExpertise', mock_expertise_class3)
+        stub_const('Legion::Data::Model::ApolloAccessLog', mock_access_log_class3)
+        allow(mock_expertise_class3).to receive(:where).and_return(double(first: nil))
+        allow(mock_expertise_class3).to receive(:create)
+        allow(mock_access_log_class3).to receive(:create)
+        allow(host).to receive(:embed_text).and_return(nil)
+        allow(host).to receive(:find_corroboration).and_return([false, nil])
+        allow(host).to receive(:detect_contradictions).and_return([])
+        # default dedup returns nil (no duplicate) — supports chained .where for private scope
+        scoped_ds3 = double('dedup_chain3', first: nil)
+        allow(scoped_ds3).to receive(:where).and_return(double('scoped_ds3b', first: nil))
+        allow(scoped_ds3).to receive(:exclude).and_return(scoped_ds3)
+        allow(mock_entry_class3).to receive(:where).and_return(scoped_ds3)
+        # two different principals each get their own entry
+        allow(mock_entry_class3).to receive(:create).and_return(mock_entry_a, mock_entry_b)
+      end
+
+      it 'does not deduplicate private entries from different principals' do
+        result1 = host.handle_ingest(content: 'same fact', content_type: :observation,
+                                     access_scope: 'private', identity_principal_id: 1)
+        result2 = host.handle_ingest(content: 'same fact', content_type: :observation,
+                                     access_scope: 'private', identity_principal_id: 2)
+        expect(result1[:entry_id]).not_to eq(result2[:entry_id])
+      end
+    end
+
     context 'early-return warn logs' do
       let(:logger) { instance_double('Logger', debug: nil, info: nil, warn: nil) }
 
