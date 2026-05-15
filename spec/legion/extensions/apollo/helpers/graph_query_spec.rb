@@ -65,5 +65,36 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::GraphQuery do
       expect(sql).to include("'dns'")
       expect(sql).to include('&&')
     end
+
+    context 'without requesting_principal_id' do
+      it 'includes no access_scope filter' do
+        sql = described_class.build_semantic_search_sql(limit: 5, min_confidence: 0.3)
+        expect(sql).not_to include('access_scope')
+      end
+    end
+
+    context 'with requesting_principal_id' do
+      let(:sql) { described_class.build_semantic_search_sql(limit: 5, min_confidence: 0.3, requesting_principal_id: 42) }
+
+      it 'allows global entries unconditionally' do
+        expect(sql).to include("access_scope = 'global'")
+      end
+
+      it 'allows private entries owned by the principal via principal FK' do
+        expect(sql).to include('e.identity_principal_id = 42')
+      end
+
+      it 'allows private entries owned by the principal via identity subquery (multi-provider auth)' do
+        expect(sql).to include('SELECT id FROM identities WHERE principal_id = 42')
+      end
+
+      it 'allows team entries when principal shares a group with the submitter' do
+        expect(sql).to include('identity_group_memberships')
+      end
+
+      it 'wraps the entire access_scope condition in parentheses so it does not break AND chaining' do
+        expect(sql).to match(/AND \(.*access_scope.*\)/m)
+      end
+    end
   end
 end
