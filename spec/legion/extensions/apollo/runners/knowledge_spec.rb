@@ -371,6 +371,95 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
       end
     end
 
+    context 'identity kwargs persistence' do
+      let(:mock_entry_class2) { double('ApolloEntry2') }
+      let(:mock_expertise_class2) { double('ApolloExpertise2') }
+      let(:mock_access_log_class2) { double('ApolloAccessLog2') }
+      let(:mock_entry2) { double('entry2', id: 99, embedding: nil) }
+
+      before do
+        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class2)
+        stub_const('Legion::Data::Model::ApolloExpertise', mock_expertise_class2)
+        stub_const('Legion::Data::Model::ApolloAccessLog', mock_access_log_class2)
+        scoped_ds = double('scoped_ds2', first: nil, where: double('scoped_ds2b', first: nil))
+        allow(mock_entry_class2).to receive(:where).and_return(scoped_ds)
+        allow(scoped_ds).to receive(:exclude).and_return(scoped_ds)
+        allow(mock_expertise_class2).to receive(:where).and_return(double(first: nil))
+        allow(mock_expertise_class2).to receive(:create)
+        allow(mock_access_log_class2).to receive(:create)
+        allow(host).to receive(:embed_text).and_return(nil)
+        allow(host).to receive(:find_corroboration).and_return([false, nil])
+        allow(host).to receive(:detect_contradictions).and_return([])
+      end
+
+      it 'passes identity_principal_id and access_scope through to create_candidate_entry' do
+        expect(mock_entry_class2).to receive(:create).with(
+          hash_including(identity_principal_id: 42, access_scope: 'private')
+        ).and_return(mock_entry2)
+
+        host.handle_ingest(
+          content: 'test fact', tags: [],
+          identity_principal_id: 42, identity_id: 7, identity_canonical_name: 'alice',
+          access_scope: 'private'
+        )
+      end
+
+      it 'defaults access_scope to global when not provided' do
+        expect(mock_entry_class2).to receive(:create).with(
+          hash_including(access_scope: 'global')
+        ).and_return(mock_entry2)
+
+        host.handle_ingest(content: 'test fact', tags: [])
+      end
+
+      it 'persists identity_id and identity_canonical_name' do
+        expect(mock_entry_class2).to receive(:create).with(
+          hash_including(identity_id: 7, identity_canonical_name: 'alice')
+        ).and_return(mock_entry2)
+
+        host.handle_ingest(
+          content: 'test fact', tags: [],
+          identity_principal_id: 42, identity_id: 7, identity_canonical_name: 'alice',
+          access_scope: 'private'
+        )
+      end
+    end
+
+    context 'dedup: private entries from different principals are not deduplicated' do
+      let(:mock_entry_class3) { double('ApolloEntry3') }
+      let(:mock_expertise_class3) { double('ApolloExpertise3') }
+      let(:mock_access_log_class3) { double('ApolloAccessLog3') }
+      let(:mock_entry_a) { double('entry_a', id: 7, embedding: nil) }
+      let(:mock_entry_b) { double('entry_b', id: 8, embedding: nil) }
+
+      before do
+        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class3)
+        stub_const('Legion::Data::Model::ApolloExpertise', mock_expertise_class3)
+        stub_const('Legion::Data::Model::ApolloAccessLog', mock_access_log_class3)
+        allow(mock_expertise_class3).to receive(:where).and_return(double(first: nil))
+        allow(mock_expertise_class3).to receive(:create)
+        allow(mock_access_log_class3).to receive(:create)
+        allow(host).to receive(:embed_text).and_return(nil)
+        allow(host).to receive(:find_corroboration).and_return([false, nil])
+        allow(host).to receive(:detect_contradictions).and_return([])
+        # default dedup returns nil (no duplicate) — supports chained .where for private scope
+        scoped_ds3 = double('dedup_chain3', first: nil)
+        allow(scoped_ds3).to receive(:where).and_return(double('scoped_ds3b', first: nil))
+        allow(scoped_ds3).to receive(:exclude).and_return(scoped_ds3)
+        allow(mock_entry_class3).to receive(:where).and_return(scoped_ds3)
+        # two different principals each get their own entry
+        allow(mock_entry_class3).to receive(:create).and_return(mock_entry_a, mock_entry_b)
+      end
+
+      it 'does not deduplicate private entries from different principals' do
+        result1 = host.handle_ingest(content: 'same fact', content_type: :observation,
+                                     access_scope: 'private', identity_principal_id: 1)
+        result2 = host.handle_ingest(content: 'same fact', content_type: :observation,
+                                     access_scope: 'private', identity_principal_id: 2)
+        expect(result1[:entry_id]).not_to eq(result2[:entry_id])
+      end
+    end
+
     context 'early-return warn logs' do
       let(:logger) { instance_double('Logger', debug: nil, info: nil, warn: nil) }
 
@@ -521,6 +610,37 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         expect(dataset).to have_received(:where).with(knowledge_domain: 'general')
       end
     end
+
+    context 'access scope forwarding' do
+      let(:mock_entry_class) { double('ApolloEntry') }
+      let(:mock_db) { double('db') }
+
+      before do
+        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
+        allow(Legion::LLM::Call::Embeddings).to receive(:generate)
+          .and_return({ vector: Array.new(1024, 0.1), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
+        allow(mock_entry_class).to receive(:db).and_return(mock_db)
+        allow(mock_db).to receive(:fetch).and_return(double(all: []))
+        allow(mock_entry_class).to receive(:where).and_return(double(update: true))
+      end
+
+      it 'forwards requesting_principal_id to build_semantic_search_sql' do
+        expect(Legion::Extensions::Apollo::Helpers::GraphQuery).to receive(:build_semantic_search_sql).with(
+          hash_including(requesting_principal_id: 42)
+        ).and_return('SELECT 1')
+        allow(mock_db).to receive(:fetch).and_return(double(all: []))
+
+        host.handle_query(query: 'test', requesting_principal_id: 42)
+      end
+
+      it 'passes nil requesting_principal_id when not provided (no filter)' do
+        expect(Legion::Extensions::Apollo::Helpers::GraphQuery).to receive(:build_semantic_search_sql).with(
+          hash_including(requesting_principal_id: nil)
+        ).and_return('SELECT 1')
+
+        host.handle_query(query: 'test')
+      end
+    end
   end
 
   describe '#normalize_text_input' do
@@ -596,6 +716,14 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
           hash_including(domain: 'clinical')
         ).and_call_original
         host.retrieve_relevant(query: 'treatment', domain: 'clinical')
+      end
+
+      it 'forwards requesting_principal_id to build_semantic_search_sql' do
+        expect(Legion::Extensions::Apollo::Helpers::GraphQuery).to receive(:build_semantic_search_sql).with(
+          hash_including(requesting_principal_id: 7)
+        ).and_return('SELECT 1')
+
+        host.retrieve_relevant(query: 'test', requesting_principal_id: 7)
       end
     end
   end
@@ -865,6 +993,18 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         expect(result[:deleted]).to eq(3)
         expect(result[:redacted]).to eq(2)
         expect(result[:agent_id]).to eq('agent-dead')
+      end
+
+      it 'clears identity columns on confirmed (redacted) entries' do
+        expect(mock_dataset).to receive(:update).with(
+          hash_including(
+            identity_principal_id:   nil,
+            identity_id:             nil,
+            identity_canonical_name: nil
+          )
+        ).and_return(2)
+
+        host.handle_erasure_request(agent_id: 'agent-dead')
       end
     end
 

@@ -52,7 +52,9 @@ module Legion
             SQL
           end
 
-          def build_semantic_search_sql(limit: default_query_limit, min_confidence: default_query_min_confidence, statuses: nil, tags: nil, domain: nil, **)
+          def build_semantic_search_sql(limit: default_query_limit, min_confidence: default_query_min_confidence,
+                                        statuses: nil, tags: nil, domain: nil,
+                                        requesting_principal_id: nil, **)
             conditions = ["e.confidence >= #{min_confidence}"]
 
             if statuses&.any?
@@ -66,6 +68,23 @@ module Legion
             end
 
             conditions << "e.knowledge_domain = '#{domain}'" if domain
+
+            if requesting_principal_id
+              pid = requesting_principal_id.to_i
+              conditions << <<~SCOPE_SQL.strip
+                (e.access_scope = 'global'
+                 OR (e.access_scope = 'private'
+                     AND (e.identity_principal_id = #{pid}
+                          OR e.identity_id IN (SELECT id FROM identities WHERE principal_id = #{pid})))
+                 OR (e.access_scope = 'team'
+                     AND EXISTS (
+                       SELECT 1 FROM identity_group_memberships igm1
+                       JOIN identity_group_memberships igm2 ON igm1.group_id = igm2.group_id
+                       WHERE igm1.principal_id = #{pid}
+                         AND igm2.principal_id = e.identity_principal_id
+                     )))
+              SCOPE_SQL
+            end
 
             where_clause = conditions.join(' AND ')
 

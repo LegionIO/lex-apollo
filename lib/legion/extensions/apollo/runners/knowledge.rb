@@ -82,7 +82,11 @@ module Legion
             }
           end
 
-          def handle_ingest(content: nil, content_type: nil, tags: [], source_agent: 'unknown', source_provider: nil, source_channel: nil, knowledge_domain: nil, submitted_by: nil, submitted_from: nil, content_hash: nil, context: {}, skip: false, **) # rubocop:disable Metrics/ParameterLists, Layout/LineLength
+          def handle_ingest(content: nil, content_type: nil, tags: [], source_agent: 'unknown', # rubocop:disable Metrics/ParameterLists
+                            source_provider: nil, source_channel: nil, knowledge_domain: nil,
+                            submitted_by: nil, submitted_from: nil, content_hash: nil, context: {},
+                            skip: false, access_scope: 'global', identity_principal_id: nil,
+                            identity_id: nil, identity_canonical_name: nil, **)
             return { status: :skipped } if skip
 
             content = normalize_text_input(content)
@@ -92,7 +96,8 @@ module Legion
             return early_error if early_error
 
             hash = content_hash || (defined?(Helpers::Writeback) ? Helpers::Writeback.content_hash(content) : nil)
-            existing = active_duplicate_for_hash(hash)
+            existing = active_duplicate_for_hash(hash, access_scope:          access_scope,
+                                                       identity_principal_id: identity_principal_id)
             if existing
               log.info("Apollo Knowledge.handle_ingest deduped entry_id=#{existing.id} source_agent=#{source_agent}")
               return { success: true, entry_id: existing.id, deduped: true }
@@ -102,7 +107,11 @@ module Legion
             content_type_sym = content_type.to_s
             metadata = ingest_metadata(tags: tags, knowledge_domain: knowledge_domain, source_agent: source_agent,
                                        source_provider: source_provider, source_channel: source_channel,
-                                       submitted_by: submitted_by, submitted_from: submitted_from)
+                                       submitted_by: submitted_by, submitted_from: submitted_from,
+                                       access_scope: access_scope,
+                                       identity_principal_id: identity_principal_id,
+                                       identity_id: identity_id,
+                                       identity_canonical_name: identity_canonical_name)
 
             corroborated, existing_id = find_corroboration(
               embedding, content_type_sym, metadata[:source_agent], metadata[:source_channel]
@@ -133,7 +142,10 @@ module Legion
             { success: false, error: e.message }
           end
 
-          def handle_query(query:, limit: Helpers::GraphQuery.default_query_limit, min_confidence: Helpers::GraphQuery.default_query_min_confidence, status: UNSET, tags: nil, domain: nil, agent_id: 'unknown', **) # rubocop:disable Layout/LineLength, Metrics/CyclomaticComplexity
+          def handle_query(query:, limit: Helpers::GraphQuery.default_query_limit, # rubocop:disable Metrics/CyclomaticComplexity, Metrics/ParameterLists
+                           min_confidence: Helpers::GraphQuery.default_query_min_confidence,
+                           status: UNSET, tags: nil, domain: nil, agent_id: 'unknown',
+                           requesting_principal_id: nil, **)
             return { success: false, error: 'apollo_data_not_available' } unless Helpers::DataModels.apollo_entry_available?
 
             entry_model = Helpers::DataModels.apollo_entry
@@ -143,19 +155,22 @@ module Legion
             log.debug("Apollo Knowledge.handle_query mode=#{browse_query?(query) ? 'browse' : 'semantic'} query_length=#{query.length} limit=#{limit} statuses=#{Array(requested_status).join(',')} status_defaulted=#{status_defaulted} tags=#{Array(tags).size} domain=#{domain || 'nil'} agent_id=#{agent_id}") # rubocop:disable Layout/LineLength
             if browse_query?(query)
               return list_entries_chronologically(query: query, limit: limit, status: requested_status,
-                                                  status_defaulted: status_defaulted, tags: tags, domain: domain)
+                                                  status_defaulted: status_defaulted, tags: tags, domain: domain,
+                                                  requesting_principal_id: requesting_principal_id)
             end
 
             embedding = embed_text(query)
             if embedding.nil?
               log.warn('Apollo Knowledge.handle_query embedding unavailable; falling back to browse query')
               return list_entries_chronologically(query: query, limit: limit, status: requested_status,
-                                                  status_defaulted: status_defaulted, tags: tags, domain: domain)
+                                                  status_defaulted: status_defaulted, tags: tags, domain: domain,
+                                                  requesting_principal_id: requesting_principal_id)
             end
 
             sql = Helpers::GraphQuery.build_semantic_search_sql(
               limit: limit, min_confidence: min_confidence,
-              statuses: Array(requested_status).map(&:to_s), tags: tags, domain: domain
+              statuses: Array(requested_status).map(&:to_s), tags: tags, domain: domain,
+              requesting_principal_id: requesting_principal_id
             )
 
             db = entry_model.db
@@ -251,7 +266,9 @@ module Legion
             { success: false, error: e.message }
           end
 
-          def retrieve_relevant(query: nil, limit: Helpers::Confidence.apollo_setting(:query, :retrieval_limit, default: 5), min_confidence: Helpers::GraphQuery.default_query_min_confidence, tags: nil, domain: nil, skip: false, **) # rubocop:disable Layout/LineLength
+          def retrieve_relevant(query: nil, limit: Helpers::Confidence.apollo_setting(:query, :retrieval_limit, default: 5),
+                                min_confidence: Helpers::GraphQuery.default_query_min_confidence,
+                                tags: nil, domain: nil, skip: false, requesting_principal_id: nil, **)
             return { status: :skipped } if skip
 
             return { success: false, error: 'apollo_data_not_available' } unless Helpers::DataModels.apollo_entry_available?
@@ -268,7 +285,8 @@ module Legion
 
             sql = Helpers::GraphQuery.build_semantic_search_sql(
               limit: limit, min_confidence: min_confidence,
-              statuses: %w[confirmed candidate], tags: tags, domain: domain
+              statuses: %w[confirmed candidate], tags: tags, domain: domain,
+              requesting_principal_id: requesting_principal_id
             )
 
             db = Helpers::DataModels.apollo_entry.db
@@ -341,10 +359,16 @@ module Legion
                       .exclude(status: 'confirmed')
                       .delete
 
-            # Redact attribution on confirmed entries (corroborated, retain knowledge)
             redacted = conn[:apollo_entries]
                        .where(source_agent: agent_id, status: 'confirmed')
-                       .update(source_agent: 'redacted', source_provider: nil, source_channel: nil)
+                       .update(
+                         source_agent:            'redacted',
+                         source_provider:         nil,
+                         source_channel:          nil,
+                         identity_principal_id:   nil,
+                         identity_id:             nil,
+                         identity_canonical_name: nil
+                       )
 
             { deleted: deleted, redacted: redacted, agent_id: agent_id }
               .tap { |result| log.info("Apollo Knowledge.handle_erasure_request deleted=#{result[:deleted]} redacted=#{result[:redacted]} agent_id=#{agent_id}") } # rubocop:disable Layout/LineLength
@@ -425,49 +449,62 @@ module Legion
             normalize_text_input(value)[0, max_length]
           end
 
-          def active_duplicate_for_hash(hash)
+          def active_duplicate_for_hash(hash, access_scope: nil, identity_principal_id: nil)
             return nil unless hash
 
-            existing = Helpers::DataModels.apollo_entry
-                                          .where(content_hash: hash)
-                                          .exclude(status: 'archived')
-                                          .first
+            dataset = Helpers::DataModels.apollo_entry
+                                         .where(content_hash: hash)
+                                         .exclude(status: 'archived')
+
+            dataset = dataset.where(identity_principal_id: identity_principal_id) if access_scope == 'private' && identity_principal_id
+
+            existing = dataset.first
             existing&.update(confidence: [existing.confidence + Helpers::Confidence.retrieval_boost, 1.0].min)
             log.debug("Apollo Knowledge.active_duplicate_for_hash matched entry_id=#{existing.id}") if existing
             existing
           end
 
-          def ingest_metadata(tags:, knowledge_domain:, source_agent:, source_provider:, source_channel:, submitted_by:, submitted_from:)
+          def ingest_metadata(tags:, knowledge_domain:, source_agent:, source_provider:, source_channel:, # rubocop:disable Metrics/ParameterLists
+                              submitted_by:, submitted_from:, access_scope: 'global',
+                              identity_principal_id: nil, identity_id: nil, identity_canonical_name: nil)
             tag_array = defined?(Helpers::TagNormalizer) ? Helpers::TagNormalizer.normalize_all(tags) : Array(tags)
             agent = truncate_for_column(source_agent, 50) || 'unknown'
 
-            { tags:            tag_array,
-              domain:          truncate_for_column(knowledge_domain || tag_array.first || 'general', 50),
-              source_agent:    agent,
-              source_provider: truncate_for_column(source_provider || derive_provider_from_agent(agent), 50),
-              source_channel:  truncate_for_column(source_channel, 100),
-              submitted_by:    truncate_for_column(submitted_by, 255),
-              submitted_from:  truncate_for_column(submitted_from, 255) }
+            { tags:                    tag_array,
+              domain:                  truncate_for_column(knowledge_domain || tag_array.first || 'general', 50),
+              source_agent:            agent,
+              source_provider:         truncate_for_column(source_provider || derive_provider_from_agent(agent), 50),
+              source_channel:          truncate_for_column(source_channel, 100),
+              submitted_by:            truncate_for_column(submitted_by, 255),
+              submitted_from:          truncate_for_column(submitted_from, 255),
+              access_scope:            access_scope || 'global',
+              identity_principal_id:   identity_principal_id.is_a?(Integer) ? identity_principal_id : nil,
+              identity_id:             identity_id.is_a?(Integer) ? identity_id : nil,
+              identity_canonical_name: identity_canonical_name&.to_s&.slice(0, 255) }
           end
 
           def create_candidate_entry(content:, content_type:, context:, metadata:, content_hash:, embedding:)
             new_entry = Helpers::DataModels.apollo_entry.create(
-              content:          content,
-              content_type:     content_type,
-              confidence:       Helpers::Confidence.initial_confidence,
-              source_agent:     metadata[:source_agent],
-              source_provider:  metadata[:source_provider],
-              source_channel:   metadata[:source_channel],
-              source_context:   json_dump(context.is_a?(Hash) ? context : {}),
-              tags:             Sequel.pg_array(metadata[:tags]),
-              status:           'candidate',
-              knowledge_domain: metadata[:domain],
-              submitted_by:     metadata[:submitted_by],
-              submitted_from:   metadata[:submitted_from],
-              content_hash:     content_hash,
-              embedding:        embedding ? Sequel.lit("'[#{embedding.join(',')}]'::vector") : nil
+              content:                 content,
+              content_type:            content_type,
+              confidence:              Helpers::Confidence.initial_confidence,
+              source_agent:            metadata[:source_agent],
+              source_provider:         metadata[:source_provider],
+              source_channel:          metadata[:source_channel],
+              source_context:          json_dump(context.is_a?(Hash) ? context : {}),
+              tags:                    Sequel.pg_array(metadata[:tags]),
+              status:                  'candidate',
+              knowledge_domain:        metadata[:domain],
+              submitted_by:            metadata[:submitted_by],
+              submitted_from:          metadata[:submitted_from],
+              content_hash:            content_hash,
+              access_scope:            metadata[:access_scope] || 'global',
+              identity_principal_id:   metadata[:identity_principal_id],
+              identity_id:             metadata[:identity_id],
+              identity_canonical_name: metadata[:identity_canonical_name],
+              embedding:               embedding ? Sequel.lit("'[#{embedding.join(',')}]'::vector") : nil
             )
-            log.info("Apollo Knowledge.handle_ingest created entry_id=#{new_entry.id} status=candidate domain=#{metadata[:domain]} source_agent=#{metadata[:source_agent]}") # rubocop:disable Layout/LineLength
+            log.info("Apollo Knowledge.handle_ingest created entry_id=#{new_entry.id} status=candidate domain=#{metadata[:domain]} source_agent=#{metadata[:source_agent]} access_scope=#{metadata[:access_scope]}") # rubocop:disable Layout/LineLength
             new_entry.id
           rescue Sequel::UniqueConstraintViolation => e
             # Race condition: another thread/process inserted the same content_hash between our
@@ -491,13 +528,25 @@ module Legion
             query.to_s.strip.length < 3
           end
 
-          def list_entries_chronologically(query:, limit:, status:, status_defaulted:, tags:, domain:)
+          def list_entries_chronologically(query:, limit:, status:, status_defaulted:, tags:, domain:, requesting_principal_id: nil)
             log.debug("Apollo Knowledge.list_entries_chronologically limit=#{limit} statuses=#{Array(status).join(',')} status_defaulted=#{status_defaulted} tags=#{Array(tags).size} domain=#{domain || 'nil'}") # rubocop:disable Layout/LineLength
             dataset = Helpers::DataModels.apollo_entry.exclude(status: 'archived')
             requested = Array(status).map(&:to_s).reject(&:empty?)
             dataset = dataset.where(status: requested) unless status_defaulted || requested.empty?
             dataset = dataset.where(Sequel.lit('tags && ?', Sequel.pg_array(Array(tags)))) if tags && !Array(tags).empty?
             dataset = dataset.where(knowledge_domain: domain) if domain && !domain.to_s.empty?
+
+            if requesting_principal_id
+              pid = requesting_principal_id.to_i
+              dataset = dataset.where(
+                Sequel.lit(
+                  "(access_scope = 'global' " \
+                  "OR (access_scope = 'private' AND (identity_principal_id = ? OR identity_id IN (SELECT id FROM identities WHERE principal_id = ?))) " \
+                  "OR (access_scope = 'team' AND EXISTS (SELECT 1 FROM identity_group_memberships igm1 JOIN identity_group_memberships igm2 ON igm1.group_id = igm2.group_id WHERE igm1.principal_id = ? AND igm2.principal_id = identity_principal_id)))", # rubocop:disable Layout/LineLength
+                  pid, pid, pid
+                )
+              )
+            end
 
             entries = dataset.order(Sequel.desc(:created_at)).limit(limit).all.map do |entry|
               format_entry(entry.is_a?(Hash) ? entry : entry.values)
