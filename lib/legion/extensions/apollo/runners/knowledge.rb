@@ -85,10 +85,10 @@ module Legion
           def handle_ingest(content: nil, content_type: nil, tags: [], source_agent: 'unknown', # rubocop:disable Metrics/ParameterLists
                             source_provider: nil, source_channel: nil, knowledge_domain: nil,
                             submitted_by: nil, submitted_from: nil, content_hash: nil, context: {},
-                            skip: false, access_scope: 'global', identity_principal_id: nil,
-                            identity_id: nil, identity_canonical_name: nil, **)
+                            skip: false, access_scope: 'global', **)
             return { status: :skipped } if skip
 
+            identity = resolve_process_identity
             content = normalize_text_input(content)
             content_type = normalize_content_type(content_type.nil? ? :observation : content_type)
             log.debug("Apollo Knowledge.handle_ingest content_length=#{content.length} content_type=#{content_type} tags=#{Array(tags).size} source_agent=#{source_agent} source_channel=#{source_channel || 'nil'}") # rubocop:disable Layout/LineLength
@@ -97,7 +97,7 @@ module Legion
 
             hash = content_hash || (defined?(Helpers::Writeback) ? Helpers::Writeback.content_hash(content) : nil)
             existing = active_duplicate_for_hash(hash, access_scope:          access_scope,
-                                                       identity_principal_id: identity_principal_id)
+                                                       identity_principal_id: identity[:principal_id])
             if existing
               log.info("Apollo Knowledge.handle_ingest deduped entry_id=#{existing.id} source_agent=#{source_agent}")
               return { success: true, entry_id: existing.id, deduped: true }
@@ -109,9 +109,9 @@ module Legion
                                        source_provider: source_provider, source_channel: source_channel,
                                        submitted_by: submitted_by, submitted_from: submitted_from,
                                        access_scope: access_scope,
-                                       identity_principal_id: identity_principal_id,
-                                       identity_id: identity_id,
-                                       identity_canonical_name: identity_canonical_name)
+                                       identity_principal_id: identity[:principal_id],
+                                       identity_id: identity[:identity_id],
+                                       identity_canonical_name: identity[:canonical_name])
 
             corroborated, existing_id = find_corroboration(
               embedding, content_type_sym, metadata[:source_agent], metadata[:source_channel]
@@ -148,6 +148,7 @@ module Legion
                            requesting_principal_id: nil, **)
             return { success: false, error: 'apollo_data_not_available' } unless Helpers::DataModels.apollo_entry_available?
 
+            requesting_principal_id = resolve_requesting_principal_id(requesting_principal_id)
             entry_model = Helpers::DataModels.apollo_entry
             query = normalize_text_input(query)
             status_defaulted = status.equal?(UNSET)
@@ -273,6 +274,7 @@ module Legion
 
             return { success: false, error: 'apollo_data_not_available' } unless Helpers::DataModels.apollo_entry_available?
 
+            requesting_principal_id = resolve_requesting_principal_id(requesting_principal_id)
             query = normalize_text_input(query)
             log.debug("Apollo Knowledge.retrieve_relevant query_length=#{query.length} limit=#{limit} min_confidence=#{min_confidence} tags=#{Array(tags).size} domain=#{domain || 'nil'}") # rubocop:disable Layout/LineLength
             return { success: true, entries: [], count: 0 } if query.nil? || query.to_s.strip.empty?
@@ -718,6 +720,29 @@ module Legion
                 entry_count: 1, last_active_at: Time.now
               )
             end
+          end
+
+          def resolve_process_identity
+            return { principal_id: nil, identity_id: nil, canonical_name: nil } unless defined?(Legion::Identity::Process)
+
+            {
+              principal_id:   Legion::Identity::Process.db_principal_id,
+              identity_id:    Legion::Identity::Process.db_identity_id,
+              canonical_name: Legion::Identity::Process.canonical_name
+            }
+          rescue StandardError => e
+            handle_exception(e, level: :warn, operation: 'apollo.knowledge.resolve_process_identity')
+            { principal_id: nil, identity_id: nil, canonical_name: nil }
+          end
+
+          def resolve_requesting_principal_id(explicit_value)
+            return explicit_value if explicit_value
+            return nil unless defined?(Legion::Identity::Process)
+
+            Legion::Identity::Process.db_principal_id
+          rescue StandardError => e
+            handle_exception(e, level: :warn, operation: 'apollo.knowledge.resolve_requesting_principal_id')
+            nil
           end
 
           include Legion::Extensions::Helpers::Lex if defined?(Legion::Extensions::Helpers::Lex)
