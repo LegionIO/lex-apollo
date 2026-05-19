@@ -371,7 +371,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
       end
     end
 
-    context 'identity kwargs persistence' do
+    context 'identity from Legion::Identity::Process' do
       let(:mock_entry_class2) { double('ApolloEntry2') }
       let(:mock_expertise_class2) { double('ApolloExpertise2') }
       let(:mock_access_log_class2) { double('ApolloAccessLog2') }
@@ -390,18 +390,20 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         allow(host).to receive(:embed_text).and_return(nil)
         allow(host).to receive(:find_corroboration).and_return([false, nil])
         allow(host).to receive(:detect_contradictions).and_return([])
+        stub_const('Legion::Identity::Process', double(
+                                                  db_principal_id: 42,
+                                                  db_identity_id:  7,
+                                                  canonical_name:  'alice'
+                                                ))
       end
 
-      it 'passes identity_principal_id and access_scope through to create_candidate_entry' do
+      it 'derives identity from Legion::Identity::Process and persists it' do
         expect(mock_entry_class2).to receive(:create).with(
-          hash_including(identity_principal_id: 42, access_scope: 'private')
+          hash_including(identity_principal_id: 42, identity_id: 7, identity_canonical_name: 'alice',
+                         access_scope: 'private')
         ).and_return(mock_entry2)
 
-        host.handle_ingest(
-          content: 'test fact', tags: [],
-          identity_principal_id: 42, identity_id: 7, identity_canonical_name: 'alice',
-          access_scope: 'private'
-        )
+        host.handle_ingest(content: 'test fact', tags: [], access_scope: 'private')
       end
 
       it 'defaults access_scope to global when not provided' do
@@ -412,14 +414,14 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         host.handle_ingest(content: 'test fact', tags: [])
       end
 
-      it 'persists identity_id and identity_canonical_name' do
+      it 'ignores identity kwargs passed by callers' do
         expect(mock_entry_class2).to receive(:create).with(
-          hash_including(identity_id: 7, identity_canonical_name: 'alice')
+          hash_including(identity_principal_id: 42, identity_id: 7, identity_canonical_name: 'alice')
         ).and_return(mock_entry2)
 
         host.handle_ingest(
           content: 'test fact', tags: [],
-          identity_principal_id: 42, identity_id: 7, identity_canonical_name: 'alice',
+          identity_principal_id: 999, identity_id: 888, identity_canonical_name: 'mallory',
           access_scope: 'private'
         )
       end
