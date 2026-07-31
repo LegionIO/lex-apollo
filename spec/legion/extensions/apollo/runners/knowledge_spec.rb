@@ -522,7 +522,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
       end
 
       it 'defaults contradiction detection to disabled' do
-        expect(Legion::Extensions::Apollo::Helpers::Confidence.apollo_setting(:contradiction, :enabled, default: false)).to be false
+        expect(Legion::Extensions::Apollo.settings[:contradiction][:enabled]).to be false
       end
 
       it 'does not call detect_contradictions when flag is false' do

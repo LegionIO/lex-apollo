@@ -597,7 +597,7 @@ module Legion
           end
 
           def contradiction_detection_enabled?
-            Helpers::Confidence.apollo_setting(:contradiction, :enabled, default: false)
+            settings[:contradiction][:enabled] == true
           end
 
           def schedule_contradiction_detection(entry_id:, embedding:, content:)
