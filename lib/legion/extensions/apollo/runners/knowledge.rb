@@ -132,11 +132,11 @@ module Legion
               entry_id: existing_id, agent_id: metadata[:source_agent], action: 'ingest'
             )
 
-            contradictions = detect_contradictions(existing_id, embedding, content)
-            log.debug("Apollo Knowledge.handle_ingest complete entry_id=#{existing_id} corroborated=#{corroborated} contradictions=#{contradictions.size}")
+            schedule_contradiction_detection(entry_id: existing_id, embedding: embedding, content: content)
+            log.debug("Apollo Knowledge.handle_ingest complete entry_id=#{existing_id} corroborated=#{corroborated}")
 
             { success: true, entry_id: existing_id, status: corroborated ? 'corroborated' : 'candidate',
-              corroborated: corroborated, contradictions: contradictions }
+              corroborated: corroborated, contradictions: [] }
           rescue Sequel::Error => e
             handle_exception(e, level: :error, operation: 'apollo.knowledge.handle_ingest')
             { success: false, error: e.message }
@@ -594,6 +594,22 @@ module Legion
             return :all if allowed == :all || allowed.nil?
 
             Array(allowed)
+          end
+
+          def contradiction_detection_enabled?
+            Helpers::Confidence.apollo_setting(:contradiction, :enabled, default: false)
+          end
+
+          def schedule_contradiction_detection(entry_id:, embedding:, content:)
+            return unless contradiction_detection_enabled?
+            return unless embedding && Helpers::DataModels.apollo_entry_available?
+
+            Legion::Extensions::Apollo::Actor::ContradictionScanner.enqueue(
+              entry_id: entry_id, embedding: embedding, content: content
+            )
+            log.debug("Apollo Knowledge.schedule_contradiction_detection enqueued entry_id=#{entry_id}")
+          rescue StandardError => e
+            handle_exception(e, level: :warn, operation: 'apollo.knowledge.schedule_contradiction_detection')
           end
 
           def detect_contradictions(entry_id, embedding, content)

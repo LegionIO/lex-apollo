@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.29] - 2026-07-31
+
+### Changed
+- **Contradiction detection moved off the synchronous write path.** `handle_ingest` no longer blocks on `detect_contradictions`. When enabled, contradiction work is enqueued to the new `ContradictionScanner` interval actor (10-minute cadence, configurable via `apollo.actors.contradiction_interval`). The return payload retains a stable `contradictions: []` key.
+- New setting `apollo.contradiction.enabled` (default: `false`) controls whether contradiction detection runs at all. When false, no LLM calls or vector scans are performed for contradiction purposes.
+- Corrected CLAUDE.md backing store description from Azure to self-hosted PostgreSQL + pgvector.
+
+### Added
+- `Actor::ContradictionScanner` — interval actor that drains a thread-safe queue of pending entries and runs `detect_contradictions` out-of-band from the write path.
+- `contradiction_interval` setting under `apollo.actors` (default: 600 seconds).
+
 ## [0.4.27] - 2026-05-15
 
 ### Added
