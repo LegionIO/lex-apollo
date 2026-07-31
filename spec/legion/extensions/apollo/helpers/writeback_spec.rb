@@ -102,7 +102,7 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Writeback do
       end
 
       it 'does not call Runners::Knowledge.handle_ingest directly' do
-        knowledge_mod = Module.new { def self.handle_ingest(**_); end }
+        knowledge_mod = Module.new { def self.handle_ingest(**); end }
         stub_const('Legion::Extensions::Apollo::Runners', Module.new)
         stub_const('Legion::Extensions::Apollo::Runners::Knowledge', knowledge_mod)
         allow(knowledge_mod).to receive(:handle_ingest)
@@ -112,7 +112,7 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Writeback do
     end
 
     context 'when Legion::Apollo is not defined' do
-      let(:knowledge_mod) { Module.new { def self.handle_ingest(**_); end } }
+      let(:knowledge_mod) { Module.new { def self.handle_ingest(**); end } }
 
       before do
         hide_const('Legion::Apollo') if defined?(Legion::Apollo)
