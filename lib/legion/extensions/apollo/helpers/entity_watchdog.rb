@@ -28,7 +28,7 @@ module Legion
 
                 text.scan(pattern).each do |match|
                   entities << { type: entity_type, value: match.strip,
-confidence: Confidence.apollo_setting(:entity_watchdog, :detect_confidence, default: 0.5) }
+confidence: settings[:entity_watchdog][:detect_confidence] }
                 end
               end
 

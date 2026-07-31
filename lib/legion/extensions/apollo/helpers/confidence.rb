@@ -24,25 +24,18 @@ module Legion
 
           module_function
 
-          def apollo_setting(*keys, default:)
-            settings.dig(*keys)
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'apollo.confidence.apollo_setting', keys: keys)
-            default
-          end
-
-          def initial_confidence     = apollo_setting(:confidence, :initial, default: INITIAL_CONFIDENCE)
-          def corroboration_boost    = apollo_setting(:confidence, :corroboration_boost, default: CORROBORATION_BOOST)
-          def retrieval_boost        = apollo_setting(:confidence, :retrieval_boost, default: RETRIEVAL_BOOST)
-          def power_law_alpha        = apollo_setting(:power_law_alpha, default: POWER_LAW_ALPHA)
-          def decay_threshold        = apollo_setting(:decay_threshold, default: DECAY_THRESHOLD)
-          def write_confidence_gate  = apollo_setting(:confidence, :write_gate, default: WRITE_CONFIDENCE_GATE)
-          def write_novelty_gate     = apollo_setting(:confidence, :novelty_gate, default: WRITE_NOVELTY_GATE)
-          def stale_days             = apollo_setting(:stale_days, default: STALE_DAYS)
-          def decay_min_age_hours    = apollo_setting(:decay_min_age_hours, default: DECAY_MIN_AGE_HOURS)
+          def initial_confidence     = settings[:confidence][:initial]
+          def corroboration_boost    = settings[:confidence][:corroboration_boost]
+          def retrieval_boost        = settings[:confidence][:retrieval_boost]
+          def power_law_alpha        = settings[:power_law_alpha]
+          def decay_threshold        = settings[:decay_threshold]
+          def write_confidence_gate  = settings[:confidence][:write_gate]
+          def write_novelty_gate     = settings[:confidence][:novelty_gate]
+          def stale_days             = settings[:stale_days]
+          def decay_min_age_hours    = settings[:decay_min_age_hours]
 
           def corroboration_similarity_threshold
-            apollo_setting(:confidence, :corroboration_similarity, default: CORROBORATION_SIMILARITY_THRESHOLD)
+            settings[:confidence][:corroboration_similarity]
           end
 
           def apply_decay(confidence:, age_hours: nil, alpha: power_law_alpha, **)

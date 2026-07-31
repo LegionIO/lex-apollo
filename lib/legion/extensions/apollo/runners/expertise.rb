@@ -7,11 +7,11 @@ module Legion
     module Apollo
       module Runners
         module Expertise
-          def get_expertise(domain:, min_proficiency: Helpers::Confidence.apollo_setting(:expertise, :initial_proficiency, default: 0.0), **)
+          def get_expertise(domain:, min_proficiency: Legion::Extensions::Apollo.settings[:expertise][:initial_proficiency], **)
             { action: :expertise_query, domain: domain, min_proficiency: min_proficiency }
           end
 
-          def domains_at_risk(min_agents: Helpers::Confidence.apollo_setting(:expertise, :min_agents_at_risk, default: 2), **)
+          def domains_at_risk(min_agents: Legion::Extensions::Apollo.settings[:expertise][:min_agents_at_risk], **)
             { action: :domains_at_risk, min_agents: min_agents }
           end
 
@@ -75,7 +75,7 @@ module Legion
 
           def expertise_proficiency(confidences)
             avg = confidences.sum / confidences.size
-            cap = Helpers::Confidence.apollo_setting(:expertise, :proficiency_cap, default: 1.0)
+            cap = Legion::Extensions::Apollo.settings[:expertise][:proficiency_cap]
             [avg * Math.log2(confidences.size + 1), cap].min
           end
 

@@ -89,7 +89,7 @@ module Legion
             result = retrieve_relevant(
               query:          entity[:name].to_s,
               limit:          1,
-              min_confidence: Helpers::Confidence.apollo_setting(:entity_watchdog, :exists_min_confidence, default: 0.1),
+              min_confidence: settings[:entity_watchdog][:exists_min_confidence],
               tags:           [entity[:type].to_s]
             )
             return false unless result[:success] && result[:count].positive?

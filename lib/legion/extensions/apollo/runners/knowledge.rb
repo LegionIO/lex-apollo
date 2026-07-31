@@ -232,7 +232,7 @@ module Legion
             { success: false, error: e.message }
           end
 
-          def redistribute_knowledge(agent_id:, min_confidence: Helpers::Confidence.apollo_setting(:query, :redistribute_min_confidence, default: 0.5), **)
+          def redistribute_knowledge(agent_id:, min_confidence: settings[:query][:redistribute_min_confidence], **)
             return { success: false, error: 'apollo_data_not_available' } unless Helpers::DataModels.apollo_entry_available?
 
             log.debug("Apollo Knowledge.redistribute_knowledge agent_id=#{agent_id} min_confidence=#{min_confidence}")
@@ -267,7 +267,7 @@ module Legion
             { success: false, error: e.message }
           end
 
-          def retrieve_relevant(query: nil, limit: Helpers::Confidence.apollo_setting(:query, :retrieval_limit, default: 5),
+          def retrieve_relevant(query: nil, limit: settings[:query][:retrieval_limit],
                                 min_confidence: Helpers::GraphQuery.default_query_min_confidence,
                                 tags: nil, domain: nil, skip: false, requesting_principal_id: nil, **)
             return { status: :skipped } if skip
@@ -316,7 +316,7 @@ module Legion
             { success: false, error: e.message }
           end
 
-          def prepare_mesh_export(target_domain:, min_confidence: Helpers::Confidence.apollo_setting(:query, :mesh_export_min_confidence, default: 0.5), limit: Helpers::Confidence.apollo_setting(:query, :mesh_export_limit, default: 100), **) # rubocop:disable Layout/LineLength
+          def prepare_mesh_export(target_domain:, min_confidence: settings[:query][:mesh_export_min_confidence], limit: settings[:query][:mesh_export_limit], **) # rubocop:disable Layout/LineLength
             unless defined?(Legion::Data) && Legion::Data.respond_to?(:connection) && Legion::Data.connection
               return { success: false, error: 'apollo_data_not_available' }
             end
@@ -615,9 +615,9 @@ module Legion
           def detect_contradictions(entry_id, embedding, content)
             return [] unless embedding && Helpers::DataModels.apollo_entry_available?
 
-            sim_limit = Helpers::Confidence.apollo_setting(:contradiction, :similar_limit, default: 10)
-            sim_threshold = Helpers::Confidence.apollo_setting(:contradiction, :similarity_threshold, default: 0.7)
-            rel_weight = Helpers::Confidence.apollo_setting(:contradiction, :relation_weight, default: 0.8)
+            sim_limit = settings[:contradiction][:similar_limit]
+            sim_threshold = settings[:contradiction][:similarity_threshold]
+            rel_weight = settings[:contradiction][:relation_weight]
 
             db = Helpers::DataModels.apollo_entry.db
             log.debug("Apollo Knowledge.detect_contradictions entry_id=#{entry_id} similar_limit=#{sim_limit} threshold=#{sim_threshold}")
@@ -674,7 +674,7 @@ module Legion
           def find_corroboration(embedding, content_type_sym, source_agent, source_channel = nil)
             return [false, nil] unless embedding
 
-            scan_limit = Helpers::Confidence.apollo_setting(:corroboration, :scan_limit, default: 50)
+            scan_limit = settings[:corroboration][:scan_limit]
             log.debug("Apollo Knowledge.find_corroboration content_type=#{content_type_sym} source_agent=#{source_agent} source_channel=#{source_channel || 'nil'} scan_limit=#{scan_limit}") # rubocop:disable Layout/LineLength
             existing = Helpers::DataModels.apollo_entry
                                           .where(content_type: content_type_sym)
@@ -687,7 +687,7 @@ module Legion
               sim = Helpers::Similarity.cosine_similarity(vec_a: embedding, vec_b: entry.embedding)
               next unless Helpers::Similarity.above_corroboration_threshold?(similarity: sim)
 
-              same_provider_wt = Helpers::Confidence.apollo_setting(:corroboration, :same_provider_weight, default: 0.5)
+              same_provider_wt = settings[:corroboration][:same_provider_weight]
               weight = same_source_provider?(source_agent, entry) ? same_provider_wt : 1.0
 
               # Reject corroboration entirely if same channel (same data source)
@@ -732,7 +732,7 @@ module Legion
             else
               Helpers::DataModels.apollo_expertise.create(
                 agent_id: source_agent, domain: domain,
-                proficiency: Helpers::Confidence.apollo_setting(:expertise, :initial_proficiency, default: 0.0),
+                proficiency: settings[:expertise][:initial_proficiency],
                 entry_count: 1, last_active_at: Time.now
               )
             end
