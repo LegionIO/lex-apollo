@@ -1,8 +1,5 @@
 # lex-apollo: Shared Knowledge Store
 
-**Level 3 Documentation**
-- **Parent**: `/Users/miverso2/rubymine/legion/extensions-agentic/CLAUDE.md`
-- **Grandparent**: `/Users/miverso2/rubymine/legion/CLAUDE.md`
 
 **Cognitive Concept**: Apollo (all human knowledge)
 **Version**: 0.3.6
@@ -15,7 +12,7 @@ Shared durable knowledge store for the GAIA cognitive mesh. Agents write confirm
 
 - **Client mode**: Runners publish to RMQ, no direct DB. Any agent can use this.
 - **Service mode**: Actors subscribe to RMQ, write to PostgreSQL+pgvector. Dedicated process.
-- **Backing store**: Azure Database for PostgreSQL Flexible Server + pgvector extension.
+- **Backing store**: Self-hosted PostgreSQL + pgvector (datacenter-hosted, no cloud dependency).
 
 ## Key Files
 

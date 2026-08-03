@@ -9,7 +9,7 @@ module Legion
     module Apollo
       module Runners
         module Maintenance
-          def force_decay(factor: Helpers::Confidence.apollo_setting(:maintenance, :force_decay_factor, default: 0.5), **)
+          def force_decay(factor: Legion::Extensions::Apollo.settings[:maintenance][:force_decay_factor], **)
             { action: :force_decay, factor: factor }
           end
 
@@ -66,7 +66,7 @@ module Legion
             { decayed: 0, archived: 0, error: e.message }
           end
 
-          def check_corroboration(**) # rubocop:disable Metrics/CyclomaticComplexity
+          def check_corroboration(**) # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity
             unless Helpers::DataModels.apollo_entry_available?
               log.warn('Apollo Maintenance.check_corroboration skipped: apollo_data_not_available')
               return { success: false, error: 'apollo_data_not_available' }
@@ -111,7 +111,7 @@ module Legion
                 to_entry_id:   match.id,
                 relation_type: 'similar_to',
                 source_agent:  'system:corroboration',
-                weight:        Helpers::Confidence.apollo_setting(:corroboration, :relation_weight, default: 1.0)
+                weight:        Legion::Extensions::Apollo.settings[:corroboration][:relation_weight]
               )
 
               promoted += 1

@@ -42,7 +42,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::EntityExtractor do
         stub_const('Legion::LLM', Module.new do
           def self.started? = true
 
-          def self.structured(**_opts) = { data: { entities: [] } }
+          def self.structured(**) = { data: { entities: [] } }
         end)
         allow(Legion::LLM).to receive(:structured).and_return(llm_result)
       end
@@ -77,7 +77,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::EntityExtractor do
         stub_const('Legion::LLM', Module.new do
           def self.started? = true
 
-          def self.structured(**_opts) = raise(StandardError, 'timeout')
+          def self.structured(**) = raise(StandardError, 'timeout')
         end)
       end
 

@@ -7,7 +7,7 @@ unless defined?(Legion::Extensions::Actors::Every)
     module Extensions
       module Actors
         class Every
-          def initialize(**_opts); end
+          def initialize(**); end
         end
       end
     end

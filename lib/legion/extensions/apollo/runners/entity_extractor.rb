@@ -8,7 +8,7 @@ module Legion
           DEFAULT_ENTITY_TYPES = %w[person service repository concept].freeze
           DEFAULT_MIN_CONFIDENCE = 0.7
 
-          def extract_entities(text:, entity_types: nil, min_confidence: Helpers::Confidence.apollo_setting(:entity_extractor, :min_confidence, default: DEFAULT_MIN_CONFIDENCE), **) # rubocop:disable Layout/LineLength
+          def extract_entities(text:, entity_types: nil, min_confidence: Legion::Extensions::Apollo.settings[:entity_extractor][:min_confidence], **)
             if text.to_s.strip.empty?
               log.debug('Apollo EntityExtractor.extract_entities skipped reason=empty_text')
               return { success: true, entities: [], source: :empty }

@@ -492,6 +492,88 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         end
       end
     end
+
+    context 'contradiction detection flag' do
+      let(:mock_entry_class) { double('ApolloEntry') }
+      let(:mock_relation_class) { double('ApolloRelation') }
+      let(:mock_expertise_class) { double('ApolloExpertise') }
+      let(:mock_access_log_class) { double('ApolloAccessLog') }
+      let(:mock_entry) { double('entry', id: 'uuid-new', embedding: nil) }
+      let(:empty_dataset) { double('dataset', each: nil) }
+      let(:mock_db) { double('db') }
+
+      before do
+        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
+        stub_const('Legion::Data::Model::ApolloRelation', mock_relation_class)
+        stub_const('Legion::Data::Model::ApolloExpertise', mock_expertise_class)
+        stub_const('Legion::Data::Model::ApolloAccessLog', mock_access_log_class)
+        allow(Legion::LLM::Call::Embeddings).to receive(:generate)
+          .and_return({ vector: Array.new(1024, 0.1), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
+        allow(mock_entry_class).to receive(:where).and_return(double(exclude: double(limit: empty_dataset)))
+        dedup_chain = double('dedup_chain')
+        allow(mock_entry_class).to receive(:where).with(content_hash: anything).and_return(dedup_chain)
+        allow(dedup_chain).to receive(:exclude).with(status: 'archived').and_return(double(first: nil))
+        allow(mock_entry_class).to receive(:db).and_return(mock_db)
+        allow(mock_db).to receive(:fetch).and_return(double(all: []))
+        allow(mock_entry_class).to receive(:create).and_return(mock_entry)
+        allow(mock_expertise_class).to receive(:where).and_return(double(first: nil))
+        allow(mock_expertise_class).to receive(:create)
+        allow(mock_access_log_class).to receive(:create)
+      end
+
+      it 'defaults contradiction detection to disabled' do
+        expect(Legion::Extensions::Apollo.settings[:contradiction][:enabled]).to be false
+      end
+
+      it 'does not call detect_contradictions when flag is false' do
+        expect(host).not_to receive(:detect_contradictions)
+        result = host.handle_ingest(content: 'test fact', content_type: 'fact', source_agent: 'agent-1')
+        expect(result[:success]).to be true
+        expect(result[:contradictions]).to eq([])
+      end
+
+      it 'returns stable contradictions key as empty array when disabled' do
+        result = host.handle_ingest(content: 'test content', content_type: 'fact', source_agent: 'agent-1')
+        expect(result).to have_key(:contradictions)
+        expect(result[:contradictions]).to eq([])
+      end
+
+      context 'when enabled' do
+        before do
+          Legion::Settings[:extensions][:apollo][:contradiction][:enabled] = true
+          stub_const('Legion::Extensions::Apollo::Actor::ContradictionScanner',
+                     Class.new do
+                       @queue = Queue.new
+                       class << self
+                         attr_reader :queue
+
+                         def enqueue(entry_id:, embedding:, content:)
+                           queue.push({ entry_id: entry_id, embedding: embedding, content: content })
+                         end
+
+                         def pending_count = queue.size
+
+                         def drain
+                           items = []
+                           items << queue.pop until queue.empty?
+                           items
+                         end
+                       end
+                     end)
+        end
+
+        after do
+          Legion::Settings[:extensions][:apollo][:contradiction][:enabled] = false
+        end
+
+        it 'enqueues contradiction work to the actor instead of running inline' do
+          result = host.handle_ingest(content: 'enabled test', content_type: 'fact', source_agent: 'agent-1')
+          expect(result[:success]).to be true
+          expect(result[:contradictions]).to eq([])
+          expect(Legion::Extensions::Apollo::Actor::ContradictionScanner.pending_count).to eq(1)
+        end
+      end
+    end
   end
 
   describe '#handle_query' do

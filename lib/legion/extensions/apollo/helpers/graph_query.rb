@@ -5,18 +5,20 @@ module Legion
     module Apollo
       module Helpers
         module GraphQuery
+          extend Legion::Settings::Helper
+
           SPREAD_FACTOR = 0.6
           DEFAULT_DEPTH = 2
           MIN_ACTIVATION = 0.1
 
           module_function
 
-          def spread_factor  = Confidence.apollo_setting(:graph, :spread_factor, default: SPREAD_FACTOR)
-          def default_depth  = Confidence.apollo_setting(:graph, :default_depth, default: DEFAULT_DEPTH)
-          def min_activation = Confidence.apollo_setting(:graph, :min_activation, default: MIN_ACTIVATION)
+          def spread_factor  = settings[:graph][:spread_factor]
+          def default_depth  = settings[:graph][:default_depth]
+          def min_activation = settings[:graph][:min_activation]
 
-          def default_query_limit          = Confidence.apollo_setting(:query, :default_limit, default: 10)
-          def default_query_min_confidence = Confidence.apollo_setting(:query, :default_min_confidence, default: 0.3)
+          def default_query_limit          = settings[:query][:default_limit]
+          def default_query_min_confidence = settings[:query][:default_min_confidence]
 
           def build_traversal_sql(depth: default_depth, relation_types: nil, min_activation: self.min_activation, **)
             sf = spread_factor

@@ -82,6 +82,7 @@ module Legion
             force_decay_factor: 0.5
           },
           contradiction:       {
+            enabled:              false,
             similar_limit:        10,
             similarity_threshold: 0.7,
             relation_weight:      0.8
@@ -129,6 +130,7 @@ module Legion
             decay_interval:           3600,
             expertise_interval:       1800,
             corroboration_interval:   900,
+            contradiction_interval:   600,
             entity_watchdog_interval: 120
           }
         }

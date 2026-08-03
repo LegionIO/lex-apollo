@@ -27,11 +27,11 @@ module Legion
             json_parse(str)
           end
 
-          def relate_confidence_gate = Helpers::Confidence.apollo_setting(:gas, :relate_confidence_gate, default: RELATE_CONFIDENCE_GATE)
-          def synthesis_confidence_cap = Helpers::Confidence.apollo_setting(:gas, :synthesis_confidence_cap, default: SYNTHESIS_CONFIDENCE_CAP)
-          def max_anticipations       = Helpers::Confidence.apollo_setting(:gas, :max_anticipations, default: MAX_ANTICIPATIONS)
-          def similar_entries_limit   = Helpers::Confidence.apollo_setting(:gas, :similar_entries_limit, default: 3)
-          def fallback_confidence     = Helpers::Confidence.apollo_setting(:gas, :fallback_confidence, default: 0.5)
+          def relate_confidence_gate = Legion::Extensions::Apollo.settings[:gas][:relate_confidence_gate]
+          def synthesis_confidence_cap = Legion::Extensions::Apollo.settings[:gas][:synthesis_confidence_cap]
+          def max_anticipations       = Legion::Extensions::Apollo.settings[:gas][:max_anticipations]
+          def similar_entries_limit   = Legion::Extensions::Apollo.settings[:gas][:similar_entries_limit]
+          def fallback_confidence     = Legion::Extensions::Apollo.settings[:gas][:fallback_confidence]
 
           def process(audit_event)
             unless processable?(audit_event)
