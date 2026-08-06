@@ -398,7 +398,8 @@ module Legion
               found = instance.send(:detect_contradictions, item[:entry_id], item[:embedding], item[:content])
               total += found.size
               processed += 1
-            rescue
+            rescue StandardError => e
+              log.debug("scan_pending_contradictions item #{item[:entry_id]} failed: #{e.message}")
               items[(i + 1)..].each { |remaining| scanner.enqueue(**remaining) }
               raise
             end
