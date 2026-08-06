@@ -943,7 +943,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
       it 'stores into trace shared_store when Memory::Trace is available' do
         mock_store = double('store')
         mock_trace_helpers = Module.new do
-          def self.new_trace(type:, content_payload: nil, **kwargs) # rubocop:disable Lint/UnusedMethodArgument
+          def self.new_trace(type:, content_payload: nil, **kwargs)
             { trace_id: 'trace-abc', trace_type: type, strength: kwargs[:strength] || 0.5 }
           end
         end
