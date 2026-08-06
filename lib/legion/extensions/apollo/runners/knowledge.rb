@@ -379,6 +379,38 @@ module Legion
             { deleted: 0, redacted: 0, error: e.message }
           end
 
+          def scan_pending_contradictions(**)
+            unless Helpers::DataModels.apollo_entry_available?
+              log.warn('Apollo Knowledge.scan_pending_contradictions skipped: apollo_data_not_available')
+              return { scanned: 0, contradictions: 0, error: 'apollo_data_not_available' }
+            end
+
+            scanner = Legion::Extensions::Apollo::Actor::ContradictionScanner
+            items = scanner.mutex.synchronize { scanner.drain }
+            return { scanned: 0, contradictions: 0 } if items.empty?
+
+            log.debug("Apollo Knowledge.scan_pending_contradictions processing=#{items.size}")
+            instance = Object.new.extend(self)
+            processed = 0
+            total = 0
+
+            items.each_with_index do |item, i|
+              found = instance.send(:detect_contradictions, item[:entry_id], item[:embedding], item[:content])
+              total += found.size
+              processed += 1
+            rescue StandardError => e
+              log.debug("scan_pending_contradictions item #{item[:entry_id]} failed: #{e.message}")
+              items[(i + 1)..].each { |remaining| scanner.enqueue(**remaining) }
+              raise
+            end
+
+            log.info("Apollo Knowledge.scan_pending_contradictions scanned=#{processed} contradictions=#{total}")
+            { scanned: processed, contradictions: total }
+          rescue StandardError => e
+            handle_exception(e, level: :error, operation: 'apollo.knowledge.scan_pending_contradictions')
+            { scanned: processed, contradictions: total, error: e.message }
+          end
+
           CONFLICT_CHECK_MAX_CHARS = 4000
 
           private

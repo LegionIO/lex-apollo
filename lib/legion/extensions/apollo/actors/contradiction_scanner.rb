@@ -39,20 +39,6 @@ module Legion
           def use_runner?     = false
           def check_subtask?  = false
           def generate_task?  = false
-
-          def every
-            items = self.class.drain
-            return if items.empty?
-
-            log.debug("Apollo ContradictionScanner.every processing=#{items.size}")
-            runner = Object.new.extend(Legion::Extensions::Apollo::Runners::Knowledge)
-            items.each do |item|
-              runner.detect_contradictions(item[:entry_id], item[:embedding], item[:content])
-            end
-            log.info("Apollo ContradictionScanner.every completed=#{items.size}")
-          rescue StandardError => e
-            handle_exception(e, level: :error, operation: 'apollo.actor.contradiction_scanner')
-          end
         end
       end
     end
