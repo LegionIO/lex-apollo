@@ -40,9 +40,9 @@ module Legion
           end
 
           def ollama_embedding_available?
-            return false unless defined?(Legion::LLM::Discovery::Ollama)
+            return false unless defined?(Legion::LLM::Inventory::Discovery)
 
-            EMBEDDING_MODELS.any? { |m| Legion::LLM::Discovery::Ollama.model_available?(m) }
+            EMBEDDING_MODELS.any? { |m| Legion::LLM::Inventory::Discovery.model_available?(m, provider: :ollama) }
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'apollo.capability.ollama_embedding_available')
             false
