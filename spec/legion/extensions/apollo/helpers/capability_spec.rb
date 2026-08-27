@@ -18,9 +18,9 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Capability do
   end
 
   describe '.can_embed?' do
-    it 'returns true when LLM is started and Ollama has a model' do
+    it 'returns true when LLM is started and SSOT has an embedding lane' do
       allow(Legion::LLM).to receive(:started?).and_return(true)
-      allow(described_class).to receive(:ollama_embedding_available?).and_return(true)
+      allow(Legion::LLM).to receive(:can_embed?).and_return(true)
       expect(described_class.can_embed?).to be true
     end
 
