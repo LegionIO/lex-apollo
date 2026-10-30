@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.40] - 2026-10-30
+
+### Fixed
+- Persist GAS synthesis through normal ingestion and report separate successful entry, failed entry, persisted relation, failed relation, and skipped relation counts (#38).
+- Resolve graph sources from successful fact IDs, including deduplicated entries; reject missing endpoints, self-links, cross-scope links, weak/unsupported edges, and duplicate edges within a batch.
+- Retain synthesis provenance for successfully stored sources and continue processing independent relations after a write failure.
+- Include the existing GAS `supports_by` and `extends` relation types in the traversal vocabulary.
+
 ## [0.4.39] - 2026-10-29
 
 ### Fixed

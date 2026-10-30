@@ -91,7 +91,7 @@ Automatic writeback checks research tool calls in `Legion::LLM::Inference::Respo
 
 ### Service Mode
 
-Five actors run in the dedicated Apollo service process:
+Service actors include:
 
 | Actor | Type | Interval | Purpose |
 |---|---|---|---|
@@ -100,6 +100,21 @@ Five actors run in the dedicated Apollo service process:
 | `Decay` | Interval | 3600s | Confidence decay cycle across all entries |
 | `ExpertiseAggregator` | Interval | 1800s | Recalculate domain proficiency scores |
 | `CorroborationChecker` | Interval | 900s | Scan pending entries for auto-confirm threshold |
+| `GasSubscriber` | Subscription | on-message | Process `llm.audit.complete` events and persist accepted GAS outputs |
+
+### GAS Persistence
+
+GAS deposits facts and synthesis through normal Knowledge ingestion. New synthesis entries remain candidates and record their original source indices plus successfully stored source entry IDs in `source_context`; existing deduplicated entries retain their metadata.
+
+The `process` result's top-level counts describe generated phase outputs. Its `deposited` object reports storage outcomes:
+
+- `deposited`, `facts`, and `synthesis` count successful ingest results with entry IDs, including deduplication—not just newly inserted rows.
+- `failed` counts rejected or failed entry writes.
+- `relations`, `relations_failed`, and `relations_skipped` distinguish persisted edges, failed writes or missing endpoints, and intentionally skipped edges.
+
+Relations must meet the configured confidence gate, use a supported type, and connect an unambiguous successful fact deposit to an existing target in the same access scope. Self-links and duplicate edges within the batch are skipped. Independent relation failures do not discard successful entry deposits or prevent later edges from being processed. Existing GAS types `supports_by` and `extends` are also accepted by graph traversal.
+
+Relation deduplication is batch-local; repeated audit events are not an exactly-once delivery contract.
 
 ### GAIA Tick Integration
 

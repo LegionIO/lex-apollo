@@ -20,7 +20,7 @@ module Legion
           DECAY_MIN_AGE_HOURS = 168
           CONTENT_TYPES = %i[fact concept procedure association observation].freeze
           STATUSES = %w[candidate confirmed disputed decayed archived].freeze
-          RELATION_TYPES = %w[is_a has_a part_of causes similar_to contradicts supersedes depends_on].freeze
+          RELATION_TYPES = %w[is_a has_a part_of causes similar_to contradicts supersedes depends_on supports_by extends].freeze
 
           module_function
 

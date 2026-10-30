@@ -139,31 +139,101 @@ module Legion
             []
           end
 
-          # Phase 5: Deposit - atomic write to Apollo
-          def phase_deposit(facts, _entities, _relations, _synthesis, audit_event)
-            unless defined?(Runners::Knowledge)
-              log.debug('GAS phase_deposit skipped reason=knowledge_runner_unavailable')
-              return { deposited: 0 }
+          # Phase 5: Deposit entries, then link successfully stored facts.
+          def phase_deposit(facts, _entities, relations, synthesis, audit_event)
+            counts = { deposited: 0, failed: 0, facts: 0, synthesis: 0 }
+            unless defined?(Legion::Extensions::Apollo::Runners::Knowledge)
+              return counts.merge(failed: facts.size + synthesis.size, relations: 0,
+                                  relations_failed: relations.size, relations_skipped: 0)
             end
 
-            deposited = 0
-            facts.each do |fact|
-              Runners::Knowledge.handle_ingest(
-                content:          fact[:content],
-                content_type:     fact[:content_type].to_s,
-                tags:             %w[gas auto_extracted],
-                source_agent:     'gas_pipeline',
-                source_provider:  audit_event.dig(:routing, :provider)&.to_s,
-                knowledge_domain: 'general',
-                context:          { source_request_id: audit_event[:request_id] }
-              )
-              deposited += 1
-            rescue StandardError => e
-              handle_exception(e, level: :warn, operation: 'apollo.gas.phase_deposit_fact')
+            fact_ids = Array.new(facts.size)
+            source_ids = {}
+            { facts: facts, synthesis: synthesis }.each do |kind, entries|
+              entries.each_with_index do |item, index|
+                context = { source_request_id: audit_event[:request_id] }
+                if kind == :synthesis
+                  context[:source_indices] = Array(item[:source_indices])
+                  context[:source_entry_ids] = context[:source_indices].filter_map do |source_index|
+                    fact_ids[source_index] if source_index.is_a?(Integer) && source_index.between?(0, facts.size - 1)
+                  end.uniq
+                end
+                result = Legion::Extensions::Apollo::Runners::Knowledge.handle_ingest(
+                  content: item[:content], content_type: item[:content_type].to_s,
+                  tags: %w[gas auto_extracted], source_agent: 'gas_pipeline',
+                  source_provider: audit_event.dig(:routing, :provider),
+                  knowledge_domain: 'general', context: context
+                )
+                unless result.is_a?(Hash) && result[:success] == true && result[:entry_id]
+                  counts[:failed] += 1
+                  next
+                end
+
+                counts[:deposited] += 1
+                counts[kind] += 1
+                next unless kind == :facts
+
+                fact_ids[index] = result[:entry_id]
+                ids = (source_ids[item[:content]] ||= [])
+                ids << result[:entry_id] unless ids.include?(result[:entry_id])
+              rescue StandardError => e
+                counts[:failed] += 1
+                handle_exception(e, level: :warn, operation: 'apollo.gas.phase_deposit_entry')
+              end
             end
-            log.info("GAS phase_deposit deposited=#{deposited} facts=#{facts.size}")
-            { deposited: deposited }
+            counts.merge!(gas_deposit_relations(relations: relations, source_ids: source_ids))
+            log.info("GAS phase_deposit deposited=#{counts[:deposited]} failed=#{counts[:failed]} relations=#{counts[:relations]} relations_failed=#{counts[:relations_failed]}") # rubocop:disable Layout/LineLength
+            counts
           end
+
+          def gas_deposit_relations(relations:, source_ids:)
+            counts = { relations: 0, relations_failed: 0, relations_skipped: 0 }
+            return counts if relations.empty?
+            unless Legion::Extensions::Apollo::Helpers::DataModels.apollo_entry_available? &&
+                   Legion::Extensions::Apollo::Helpers::DataModels.apollo_relation_available?
+              return counts.merge(relations_failed: relations.size)
+            end
+
+            entry_model = Legion::Extensions::Apollo::Helpers::DataModels.apollo_entry
+            relation_model = Legion::Extensions::Apollo::Helpers::DataModels.apollo_relation
+            seen = {}
+            relations.each do |relation|
+              type = relation[:relation_type].to_s
+              weight = relation[:confidence]
+              unless gas_relation_accepted?(type: type, confidence: weight)
+                counts[:relations_skipped] += 1
+                next
+              end
+              ids = source_ids[relation[:from_content]]
+              source = entry_model[ids.first] if ids&.one?
+              target = entry_model[relation[:to_id]] if relation[:to_id]
+              unless source && target
+                counts[:relations_failed] += 1
+                next
+              end
+
+              key = [source.id, target.id, type]
+              if source.id == target.id || source[:access_scope] != target[:access_scope] || seen[key]
+                counts[:relations_skipped] += 1
+                next
+              end
+              seen[key] = true
+              relation_model.create(from_entry_id: source.id, to_entry_id: target.id, relation_type: type,
+                                    weight: weight, source_agent: 'gas_pipeline')
+              counts[:relations] += 1
+            rescue StandardError => e
+              counts[:relations_failed] += 1
+              handle_exception(e, level: :warn, operation: 'apollo.gas.phase_deposit_relation')
+            end
+            counts
+          end
+
+          def gas_relation_accepted?(type:, confidence:)
+            Legion::Extensions::Apollo::Helpers::Confidence::RELATION_TYPES.include?(type) &&
+              confidence.is_a?(Numeric) && confidence.real? && confidence.finite? &&
+              confidence.between?(relate_confidence_gate, 1.0)
+          end
+          private_class_method :gas_deposit_relations, :gas_relation_accepted?
 
           # Phase 6: Anticipate - pre-cache likely follow-up questions
           def phase_anticipate(facts, _synthesis)
