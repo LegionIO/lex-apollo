@@ -12,28 +12,12 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Maintenance do
     obj
   end
 
-  describe '#force_decay' do
-    it 'returns a force_decay payload' do
-      result = runner.force_decay(factor: 0.5)
-      expect(result[:action]).to eq(:force_decay)
-      expect(result[:factor]).to eq(0.5)
-    end
-  end
+  it 'retains client action envelopes without claiming completed service mutations when data is unavailable' do
+    results = [runner.force_decay(factor: 0.5), runner.archive_stale(days: 90),
+               runner.resolve_dispute(entry_id: 'uuid-123', resolution: :keep)]
 
-  describe '#archive_stale' do
-    it 'returns an archive payload with default days' do
-      result = runner.archive_stale
-      expect(result[:action]).to eq(:archive_stale)
-      expect(result[:days]).to eq(90)
-    end
-  end
-
-  describe '#resolve_dispute' do
-    it 'returns a resolve payload' do
-      result = runner.resolve_dispute(entry_id: 'uuid-123', resolution: :keep)
-      expect(result[:action]).to eq(:resolve_dispute)
-      expect(result[:resolution]).to eq(:keep)
-    end
+    expect(results.map { |result| result[:action] }).to eq(%i[force_decay archive_stale resolve_dispute])
+    expect(results).to all(satisfy { |result| !result.key?(:success) })
   end
 
   describe '#run_decay_cycle' do

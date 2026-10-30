@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'legion/json'
 require_relative '../helpers/confidence'
 require_relative '../helpers/data_models'
 require_relative '../helpers/similarity'
@@ -11,15 +12,67 @@ module Legion
       module Runners
         module Maintenance
           def force_decay(factor: Legion::Extensions::Apollo.settings[:maintenance][:force_decay_factor], **)
-            { action: :force_decay, factor: factor }
+            return { action: :force_decay, factor: factor } unless Legion::Extensions::Apollo::Helpers::DataModels.apollo_entry_available?
+            return { success: false, error: 'invalid_factor' } unless factor.is_a?(Numeric) && factor.real? && factor.finite? && factor.between?(0.0, 1.0)
+
+            decayed = Legion::Extensions::Apollo::Helpers::DataModels.apollo_entry
+                                                                     .exclude(status: 'archived')
+                                                                     .update(confidence: Sequel[:confidence] * factor)
+            { success: true, decayed: decayed, factor: factor }
+          rescue Sequel::Error => e
+            handle_exception(e, level: :error, operation: 'apollo.maintenance.force_decay')
+            { success: false, decayed: 0, error: e.message }
           end
 
           def archive_stale(days: Helpers::Confidence.stale_days, **)
-            { action: :archive_stale, days: days }
+            return { action: :archive_stale, days: days } unless Legion::Extensions::Apollo::Helpers::DataModels.apollo_entry_available?
+            return { success: false, error: 'invalid_days' } unless days.is_a?(Numeric) && days.real? && days.finite? && days >= 0
+
+            now = Time.now
+            cutoff = now - (days * 86_400)
+            archived = Legion::Extensions::Apollo::Helpers::DataModels.apollo_entry
+                                                                      .exclude(status: 'archived')
+                                                                      .where(Sequel.function(:coalesce, :updated_at, :created_at) < cutoff)
+                                                                      .update(status: 'archived', updated_at: now)
+            { success: true, archived: archived, days: days }
+          rescue Sequel::Error => e
+            handle_exception(e, level: :error, operation: 'apollo.maintenance.archive_stale')
+            { success: false, archived: 0, error: e.message }
           end
 
           def resolve_dispute(entry_id:, resolution:, **)
-            { action: :resolve_dispute, entry_id: entry_id, resolution: resolution }
+            unless Legion::Extensions::Apollo::Helpers::DataModels.apollo_entry_available?
+              return { action: :resolve_dispute, entry_id: entry_id, resolution: resolution }
+            end
+
+            target_status = case resolution.to_s
+                            when 'accept', 'keep' then 'confirmed'
+                            when 'reject' then 'archived'
+                            end
+            return { success: false, error: 'invalid_resolution', entry_id: entry_id } unless target_status
+
+            entry_model = Legion::Extensions::Apollo::Helpers::DataModels.apollo_entry
+            entry_model.db.transaction do
+              entry = entry_model.for_update.with_pk(entry_id)
+              next({ success: false, error: 'entry_not_found', entry_id: entry_id }) unless entry
+              next({ success: false, error: 'entry_not_disputed', entry_id: entry.id, status: entry.status }) unless entry.status == 'disputed'
+
+              context = entry[:source_context]
+              context = Legion::JSON.load(context) if context.is_a?(String)
+              context ||= {}
+              raise Sequel::Error, 'invalid_source_context' unless context.respond_to?(:transform_keys)
+
+              context = context.transform_keys(&:to_sym)
+              now = Time.now
+              updates = { status: target_status, updated_at: now,
+                          source_context: Legion::JSON.dump(context.merge(dispute_resolution: resolution.to_s)) }
+              updates[:confirmed_at] = now if target_status == 'confirmed'
+              entry.update(updates)
+              { success: true, entry_id: entry.id, status: target_status, resolution: resolution }
+            end
+          rescue Sequel::Error, Legion::JSON::ParseError => e
+            handle_exception(e, level: :error, operation: 'apollo.maintenance.resolve_dispute')
+            { success: false, error: e.message, entry_id: entry_id }
           end
 
           def run_decay_cycle(alpha: nil, min_confidence: nil, **)

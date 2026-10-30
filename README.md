@@ -69,15 +69,24 @@ client.agent_profile(agent_id: 'my-agent-001')
 ### Maintenance
 
 ```ruby
-# Force confidence decay cycle (factor multiplied against each entry's confidence)
+# Multiply each non-archived entry's confidence by the supplied factor
 client.force_decay(factor: 0.5)
 
-# Archive entries older than N days
+# Archive non-archived entries untouched for N days
 client.archive_stale(days: 90)
 
 # Resolve a corroboration dispute
 client.resolve_dispute(entry_id: 'entry-uuid', resolution: :accept)
 ```
+
+With a loaded Entry model, these methods execute against the service database and return persisted outcomes. Without local data, Ruby callers retain the existing action envelopes; these envelopes do not claim a successful mutation.
+
+- `deprecate_entry` archives the entry and preserves its other source metadata, storing the supplied reason as `source_context.deprecation_reason`. An identical repeat is a no-op.
+- `force_decay` accepts a finite factor from 0 through 1 and changes confidence only; it does not implicitly archive entries.
+- `archive_stale` accepts nonnegative days and uses `COALESCE(updated_at, created_at)` to determine staleness.
+- `resolve_dispute` accepts `:accept` or `:keep` to confirm a disputed entry, or `:reject` to archive it. It records `source_context.dispute_resolution`, sets `confirmed_at` when confirming, and preserves confidence. Unknown resolutions and non-disputed entries fail without mutation.
+
+The standalone deprecation endpoint returns HTTP 200 after success, 404 for a missing entry, 503 when local data is unavailable, and 500 when persistence fails. Lifecycle status and metadata changes commit together.
 
 ## Architecture
 

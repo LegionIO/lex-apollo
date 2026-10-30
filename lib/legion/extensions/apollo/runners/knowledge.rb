@@ -75,11 +75,29 @@ module Legion
           end
 
           def deprecate_entry(entry_id:, reason:, **)
-            {
-              action:   :deprecate,
-              entry_id: entry_id,
-              reason:   reason
-            }
+            return { action: :deprecate, entry_id: entry_id, reason: reason } unless Legion::Extensions::Apollo::Helpers::DataModels.apollo_entry_available?
+
+            entry_model = Legion::Extensions::Apollo::Helpers::DataModels.apollo_entry
+            entry_model.db.transaction do
+              entry = entry_model.for_update.with_pk(entry_id)
+              next({ success: false, error: 'entry_not_found', entry_id: entry_id }) unless entry
+
+              context = entry[:source_context]
+              context = Legion::JSON.load(context) if context.is_a?(String)
+              context ||= {}
+              raise Sequel::Error, 'invalid_source_context' unless context.respond_to?(:transform_keys)
+
+              context = context.transform_keys(&:to_sym)
+              unchanged = entry.status == 'archived' && context[:deprecation_reason] == reason
+              unless unchanged
+                entry.update(status: 'archived', source_context: Legion::JSON.dump(context.merge(deprecation_reason: reason)),
+                             updated_at: Time.now)
+              end
+              { success: true, entry_id: entry.id, status: 'archived', updated: !unchanged, reason: reason }
+            end
+          rescue Sequel::Error, Legion::JSON::ParseError => e
+            handle_exception(e, level: :error, operation: 'apollo.knowledge.deprecate_entry')
+            { success: false, error: e.message, entry_id: entry_id }
           end
 
           def handle_ingest(content: nil, content_type: nil, tags: [], source_agent: 'unknown', # rubocop:disable Metrics/ParameterLists

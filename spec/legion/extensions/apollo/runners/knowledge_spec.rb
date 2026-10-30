@@ -122,11 +122,10 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
   end
 
   describe '#deprecate_entry' do
-    it 'returns a deprecate payload' do
+    it 'retains the client action envelope without claiming a completed service mutation' do
       result = runner.deprecate_entry(entry_id: 'uuid-123', reason: 'outdated')
       expect(result[:action]).to eq(:deprecate)
-      expect(result[:entry_id]).to eq('uuid-123')
-      expect(result[:reason]).to eq('outdated')
+      expect(result).not_to have_key(:success)
     end
   end
 

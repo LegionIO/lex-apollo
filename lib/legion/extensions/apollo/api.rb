@@ -51,13 +51,13 @@ module Legion
           include Legion::JSON::Helper
 
           def json_body
-            body = request.body.read
-            return {} if body.empty?
+            body = request.body&.read
+            return {} if body.nil? || body.empty?
 
             json_parse(body)
           rescue Legion::JSON::ParseError => e
             handle_exception(e, level: :warn, operation: 'apollo.api.json_body')
-            halt 400, json_dump(error: "invalid JSON: #{e.message}")
+            halt 400, json_dump({ error: "invalid JSON: #{e.message}" })
           end
 
           def runner
@@ -80,13 +80,13 @@ module Legion
         # Health check
         get '/api/apollo/health' do
           available = Helpers::DataModels.apollo_entry_available?
-          json_dump(status: available ? 'ok' : 'degraded', data_available: available)
+          json_dump({ status: available ? 'ok' : 'degraded', data_available: available })
         end
 
         # Query knowledge (semantic search)
         post '/api/apollo/query' do
           req = json_body
-          halt 400, json_dump(error: 'query is required') unless req[:query]
+          halt 400, json_dump({ error: 'query is required' }) unless req[:query]
 
           query_options = {
             query:          req[:query],
@@ -106,8 +106,8 @@ module Legion
         # Ingest knowledge
         post '/api/apollo/ingest' do
           req = json_body
-          halt 400, json_dump(error: 'content is required') unless req[:content]
-          halt 400, json_dump(error: 'content_type is required') unless req[:content_type]
+          halt 400, json_dump({ error: 'content is required' }) unless req[:content]
+          halt 400, json_dump({ error: 'content_type is required' }) unless req[:content_type]
 
           result = runner.handle_ingest(
             content:          req[:content],
@@ -126,7 +126,7 @@ module Legion
         # Graph traversal
         post '/api/apollo/traverse' do
           req = json_body
-          halt 400, json_dump(error: 'entry_id is required') unless req[:entry_id]
+          halt 400, json_dump({ error: 'entry_id is required' }) unless req[:entry_id]
 
           result = runner.handle_traverse(
             entry_id:       req[:entry_id],
@@ -141,7 +141,7 @@ module Legion
         # Retrieve relevant (GAIA-compatible)
         post '/api/apollo/retrieve' do
           req = json_body
-          halt 400, json_dump(error: 'query is required') unless req[:query]
+          halt 400, json_dump({ error: 'query is required' }) unless req[:query]
 
           result = runner.retrieve_relevant(
             query:          req[:query],
@@ -160,6 +160,16 @@ module Legion
             entry_id: params[:id],
             reason:   json_body[:reason] || 'deprecated via API'
           )
+          halt 503, json_dump({ success: false, error: 'apollo_data_not_available' }) if result[:action] == :deprecate
+
+          status_code = if result[:success]
+                          200
+                        elsif result[:error] == 'entry_not_found'
+                          404
+                        else
+                          500
+                        end
+          status status_code
           json_dump(result)
         end
 

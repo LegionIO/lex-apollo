@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.41] - 2026-10-30
+
+### Fixed
+- Execute service-side deprecation, force decay, stale archival, and dispute resolution while retaining no-data client action envelopes (#39).
+- Archive deprecated entries with retained reason/source metadata; make identical repeats idempotent and return truthful HTTP success, missing, unavailable, and persistence-failure responses.
+- Apply the approved dispute policy: `accept`/`keep` confirms, `reject` archives, and invalid or non-disputed decisions leave state unchanged. Persist lifecycle status and decision metadata atomically.
+- Keep force decay limited to confidence multiplication and use last-update-or-creation time for stale archival.
+- Handle bodyless API requests and pass explicit payload hashes to the JSON helper so health, validation, and unavailable-data responses remain JSON.
+
 ## [0.4.40] - 2026-10-30
 
 ### Fixed
