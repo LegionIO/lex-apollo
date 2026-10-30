@@ -640,20 +640,25 @@ module Legion
               next unless sim > sim_threshold
               next unless llm_detects_conflict?(content, existing[:content])
 
-              Helpers::DataModels.apollo_relation.create(
-                from_entry_id: entry_id, to_entry_id: existing[:id],
-                relation_type: 'contradicts', source_agent: 'system:contradiction',
-                weight: rel_weight
-              )
-
-              Helpers::DataModels.apollo_entry.where(id: [entry_id, existing[:id]]).update(status: 'disputed')
               contradictions << existing[:id]
+            end
+            unless contradictions.empty?
+              db.transaction do
+                contradictions.each do |contradicted_id|
+                  Legion::Extensions::Apollo::Helpers::DataModels.apollo_relation.create(
+                    from_entry_id: entry_id, to_entry_id: contradicted_id,
+                    relation_type: 'contradicts', source_agent: 'system:contradiction', weight: rel_weight
+                  )
+                end
+                Legion::Extensions::Apollo::Helpers::DataModels.apollo_entry
+                                                               .where(id: [entry_id, *contradictions]).update(status: 'disputed')
+              end
             end
             log.info("Apollo Knowledge.detect_contradictions entry_id=#{entry_id} contradictions=#{contradictions.size}") if contradictions.any?
             contradictions
           rescue Sequel::Error => e
             handle_exception(e, level: :error, operation: 'apollo.knowledge.detect_contradictions')
-            []
+            raise
           end
 
           def llm_detects_conflict?(content_a, content_b)

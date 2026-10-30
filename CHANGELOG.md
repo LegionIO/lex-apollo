@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.37] - 2026-10-29
+
+### Fixed
+- Dispatch the contradiction scanner through its actual actor entry point and deliberately invoke the internal private detector (#35).
+- Snapshot pending work safely, continue after individual failures, and retain only failed items for a later scan.
+- Commit contradiction relations and disputed statuses atomically after LLM checks; database failures roll back and remain retryable.
+
 ## [0.4.36] - 2026-10-29
 
 ### Fixed
