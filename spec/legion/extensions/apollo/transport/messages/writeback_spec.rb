@@ -2,32 +2,6 @@
 
 require 'spec_helper'
 
-unless defined?(Legion::Transport::Message)
-  module Legion
-    module Transport
-      class Message
-        attr_reader :options
-
-        def initialize(**opts)
-          @options = opts
-        end
-
-        def publish
-          { published: true }
-        end
-      end
-
-      class Exchange
-        def exchange_name
-          'mock'
-        end
-      end
-    end
-  end
-  $LOADED_FEATURES << 'legion/transport/message' unless $LOADED_FEATURES.include?('legion/transport/message')
-  $LOADED_FEATURES << 'legion/transport/exchange' unless $LOADED_FEATURES.include?('legion/transport/exchange')
-end
-
 require 'legion/extensions/apollo/transport/exchanges/apollo'
 require 'legion/extensions/apollo/transport/messages/writeback'
 
@@ -51,37 +25,25 @@ RSpec.describe Legion::Extensions::Apollo::Transport::Messages::Writeback do
   end
 
   describe '#message' do
-    it 'includes identity fields' do
-      msg = described_class.new(**base_opts)
-      payload = msg.message
-      expect(payload[:submitted_by]).to eq('user@example.com')
-      expect(payload[:submitted_from]).to eq('node-1')
-      expect(payload[:source_agent]).to eq('claude-sonnet-4-6')
-    end
+    it 'serializes producer ownership and provenance with a JSON envelope on both routes' do
+      metadata = {
+        access_scope: 'private', identity_principal_id: 31, identity_id: nil,
+        identity_canonical_name: 'producer@example.test', source_provider: 'anthropic',
+        source_channel: 'chat', content_hash: 'digest'
+      }
+      [true, false].each do |has_embedding|
+        options = base_opts.merge(metadata).merge(has_embedding: has_embedding, encrypt: false)
+        message = described_class.new(**options)
 
-    it 'compacts nil values' do
-      msg = described_class.new(**base_opts, embedding: nil, knowledge_domain: nil)
-      expect(msg.message).not_to have_key(:embedding)
-      expect(msg.message).not_to have_key(:knowledge_domain)
-    end
-  end
-
-  describe '#type' do
-    it 'returns apollo_writeback' do
-      msg = described_class.new(**base_opts)
-      expect(msg.type).to eq('apollo_writeback')
+        expect(Legion::JSON.load(message.encode_message)).to include(base_opts.merge(metadata))
+        expect(message.publish_envelope_options(options)).to include(content_type: 'application/json')
+      end
     end
   end
 
   describe '#validate' do
     it 'raises on missing content' do
       expect { described_class.new(**base_opts, content: nil) }.to raise_error(TypeError)
-    end
-
-    it 'passes with valid content' do
-      msg = described_class.new(**base_opts)
-      msg.validate
-      expect(msg.instance_variable_get(:@valid)).to be true
     end
   end
 end

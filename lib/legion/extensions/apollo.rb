@@ -17,6 +17,7 @@ require 'legion/extensions/apollo/runners/maintenance'
 require 'legion/extensions/apollo/runners/entity_extractor'
 require 'legion/extensions/apollo/runners/gas'
 require 'legion/extensions/apollo/runners/request'
+require 'legion/extensions/apollo/runners/query_response'
 
 require 'legion/extensions/apollo/api' if defined?(Sinatra)
 

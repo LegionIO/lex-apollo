@@ -9,7 +9,7 @@ module Legion
         module Messages
           class Writeback < Legion::Transport::Message
             def exchange
-              Exchanges::Apollo
+              Legion::Extensions::Apollo::Transport::Exchanges::Apollo
             end
 
             def routing_key
@@ -21,18 +21,16 @@ module Legion
             end
 
             def message
-              {
-                content:          @options[:content],
-                content_type:     @options[:content_type],
-                tags:             @options[:tags],
-                source_agent:     @options[:source_agent],
-                source_channel:   @options[:source_channel],
-                submitted_by:     @options[:submitted_by],
-                submitted_from:   @options[:submitted_from],
-                embedding:        @options[:embedding],
-                knowledge_domain: @options[:knowledge_domain],
-                context:          @options[:context] || {}
-              }.compact
+              { context: {} }.merge(
+                @options.slice(:content, :content_type, :tags, :source_agent, :source_provider,
+                               :source_channel, :knowledge_domain, :submitted_by, :submitted_from,
+                               :content_hash, :context, :access_scope, :identity_principal_id,
+                               :identity_id, :identity_canonical_name, :embedding)
+              )
+            end
+
+            def publish_envelope_options(options)
+              super(options.except(:content_type))
             end
 
             def validate

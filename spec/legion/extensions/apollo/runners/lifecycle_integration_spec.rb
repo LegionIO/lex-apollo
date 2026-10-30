@@ -21,6 +21,7 @@ RSpec.describe 'Apollo service lifecycle mutations' do
         String :content
         String :content_type
         String :status
+        String :access_scope, default: 'global'
         Float :confidence
         String :source_context
         DateTime :created_at

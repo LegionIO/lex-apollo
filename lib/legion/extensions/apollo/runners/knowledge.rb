@@ -74,12 +74,18 @@ module Legion
             }
           end
 
-          def deprecate_entry(entry_id:, reason:, **)
+          def deprecate_entry(entry_id:, reason:, requesting_principal_id: nil, **)
             return { action: :deprecate, entry_id: entry_id, reason: reason } unless Legion::Extensions::Apollo::Helpers::DataModels.apollo_entry_available?
 
             entry_model = Legion::Extensions::Apollo::Helpers::DataModels.apollo_entry
+            requesting_principal_id = resolve_requesting_principal_id(requesting_principal_id)
             entry_model.db.transaction do
-              entry = entry_model.for_update.with_pk(entry_id)
+              entries = entry_model.for_update
+              if requesting_principal_id
+                entries = entries.where(Sequel.lit(Helpers::GraphQuery.access_scope_sql(global_only: requesting_principal_id.zero?),
+                                                   requesting_principal_id: requesting_principal_id))
+              end
+              entry = entries.with_pk(entry_id)
               next({ success: false, error: 'entry_not_found', entry_id: entry_id }) unless entry
 
               context = entry[:source_context]
@@ -103,10 +109,18 @@ module Legion
           def handle_ingest(content: nil, content_type: nil, tags: [], source_agent: 'unknown', # rubocop:disable Metrics/ParameterLists
                             source_provider: nil, source_channel: nil, knowledge_domain: nil,
                             submitted_by: nil, submitted_from: nil, content_hash: nil, context: {},
-                            skip: false, access_scope: 'global', embedding: nil, **)
+                            skip: false, access_scope: 'global', embedding: nil,
+                            identity_principal_id: UNSET, identity_id: UNSET, identity_canonical_name: UNSET, **)
             return { status: :skipped } if skip
 
-            identity = resolve_process_identity
+            identity = resolve_process_identity(principal_id: identity_principal_id, identity_id: identity_id,
+                                                canonical_name: identity_canonical_name)
+            access_scope = (access_scope || 'global').to_s
+            return { success: false, error: 'invalid_access_scope' } unless %w[global private team].include?(access_scope)
+            if access_scope != 'global' && !(identity[:principal_id].is_a?(Integer) && identity[:principal_id].positive?)
+              return { success: false, error: 'identity_required' }
+            end
+
             content = normalize_text_input(content)
             content_type = normalize_content_type(content_type.nil? ? :observation : content_type)
             log.debug("Apollo Knowledge.handle_ingest content_length=#{content.length} content_type=#{content_type} tags=#{Array(tags).size} source_agent=#{source_agent} source_channel=#{source_channel || 'nil'}") # rubocop:disable Layout/LineLength
@@ -122,7 +136,6 @@ module Legion
             end
 
             embedding = embed_text(content) unless usable_embedding?(embedding)
-            content_type_sym = content_type.to_s
             metadata = ingest_metadata(tags: tags, knowledge_domain: knowledge_domain, source_agent: source_agent,
                                        source_provider: source_provider, source_channel: source_channel,
                                        submitted_by: submitted_by, submitted_from: submitted_from,
@@ -131,26 +144,8 @@ module Legion
                                        identity_id: identity[:identity_id],
                                        identity_canonical_name: identity[:canonical_name])
 
-            entry_model = Helpers::DataModels.apollo_entry
-            result = entry_model.db.transaction do
-              corroborated, existing_id = find_corroboration(
-                embedding: embedding, content_type: content_type_sym, metadata: metadata
-              )
-              unless corroborated
-                existing_id = create_candidate_entry(
-                  content: content, content_type: content_type_sym, context: context,
-                  metadata: metadata, content_hash: hash, embedding: embedding
-                )
-              end
-              raise Sequel::Error, 'entry_persistence_failed' unless existing_id
-
-              upsert_expertise(source_agent: metadata[:source_agent], domain: metadata[:domain])
-              Helpers::DataModels.apollo_access_log.create(
-                entry_id: existing_id, agent_id: metadata[:source_agent], action: 'ingest'
-              )
-              { success: true, entry_id: existing_id, status: corroborated ? 'corroborated' : 'candidate',
-                corroborated: corroborated, contradictions: [] }
-            end
+            result = persist_ingest(content: content, content_type: content_type.to_s, context: context,
+                                    metadata: metadata, content_hash: hash, embedding: embedding)
             schedule_contradiction_detection(entry_id: result[:entry_id], embedding: embedding, content: content)
             log.debug("Apollo Knowledge.handle_ingest complete entry_id=#{result[:entry_id]} corroborated=#{result[:corroborated]}")
             result
@@ -159,11 +154,12 @@ module Legion
             { success: false, error: e.message }
           end
 
-          def handle_query(query:, limit: Helpers::GraphQuery.default_query_limit, # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/ParameterLists
+          def handle_query(query:, limit: Helpers::GraphQuery.default_query_limit, # rubocop:disable Metrics/CyclomaticComplexity, Metrics/ParameterLists
                            min_confidence: Helpers::GraphQuery.default_query_min_confidence,
-                           status: UNSET, tags: nil, domain: nil, agent_id: 'unknown',
+                           status: UNSET, tags: nil, tag_match: :any, exclude_source_agents: [], domain: nil, agent_id: 'unknown',
                            requesting_principal_id: nil, **)
             return { success: false, error: 'apollo_data_not_available' } unless Helpers::DataModels.apollo_entry_available?
+            return { success: false, error: 'invalid_tag_match' } unless %w[any all].include?(tag_match.to_s)
 
             requesting_principal_id = resolve_requesting_principal_id(requesting_principal_id)
             entry_model = Helpers::DataModels.apollo_entry
@@ -174,7 +170,8 @@ module Legion
             if browse_query?(query)
               return list_entries_chronologically(query: query, limit: limit, status: requested_status,
                                                   status_defaulted: status_defaulted, tags: tags, domain: domain,
-                                                  requesting_principal_id: requesting_principal_id)
+                                                  requesting_principal_id: requesting_principal_id, min_confidence: min_confidence,
+                                                  tag_match: tag_match, exclude_source_agents: exclude_source_agents)
             end
 
             unless Helpers::DataModels.apollo_access_log_available?
@@ -182,17 +179,19 @@ module Legion
               return { success: false, error: 'apollo_data_not_available' }
             end
 
-            embedding = embed_text(query)
+            embedding = embed_text(query, task: :query)
             if embedding.nil?
               log.warn('Apollo Knowledge.handle_query embedding unavailable; falling back to browse query')
               return list_entries_chronologically(query: query, limit: limit, status: requested_status,
                                                   status_defaulted: status_defaulted, tags: tags, domain: domain,
-                                                  requesting_principal_id: requesting_principal_id)
+                                                  requesting_principal_id: requesting_principal_id, min_confidence: min_confidence,
+                                                  tag_match: tag_match, exclude_source_agents: exclude_source_agents)
             end
 
             query_options = {
               limit: limit, min_confidence: min_confidence,
               statuses: Array(requested_status).map(&:to_s), tags: Sequel.pg_array(Array(tags).map(&:to_s)),
+              tag_match: tag_match, exclude_source_agents: Array(exclude_source_agents).map(&:to_s),
               domain: domain&.to_s, requesting_principal_id: requesting_principal_id&.to_i
             }
             sql = Helpers::GraphQuery.build_semantic_search_sql(**query_options)
@@ -206,14 +205,9 @@ module Legion
               boost_entry_after_query(entry_model, entry)
             end
 
-            record_query_access(entry_id: entries.first&.dig(:id), agent_id: agent_id) if entries.any?
+            record_query_access(entry_id: entries.first[:id], agent_id: agent_id) if entries.any?
 
-            formatted = entries.map do |entry|
-              { id: entry[:id], content: entry[:content], content_type: entry[:content_type],
-                confidence: entry[:confidence], distance: entry[:distance]&.to_f,
-                tags: entry[:tags], source_agent: entry[:source_agent],
-                knowledge_domain: entry[:knowledge_domain] }
-            end
+            formatted = entries.map { |entry| format_entry(entry) }
 
             log.info("Apollo Knowledge.handle_query results=#{formatted.size} mode=semantic agent_id=#{agent_id}")
             { success: true, entries: formatted, count: formatted.size }
@@ -222,7 +216,8 @@ module Legion
             { success: false, error: e.message }
           end
 
-          def handle_traverse(entry_id:, depth: Helpers::GraphQuery.default_depth, relation_types: nil, agent_id: 'unknown', **)
+          def handle_traverse(entry_id:, depth: Helpers::GraphQuery.default_depth, relation_types: nil,
+                              agent_id: 'unknown', requesting_principal_id: nil, **)
             return { success: false, error: 'apollo_data_not_available' } unless Helpers::DataModels.apollo_entry_available?
 
             if agent_id != 'unknown' && !Helpers::DataModels.apollo_access_log_available?
@@ -237,9 +232,12 @@ module Legion
               relation_types = relation_types.map(&:to_s).select { |type| allowed.include?(type) }
             end
 
-            sql = Helpers::GraphQuery.build_traversal_sql(depth: depth, relation_types: relation_types)
+            requesting_principal_id = resolve_requesting_principal_id(requesting_principal_id)
+            sql = Helpers::GraphQuery.build_traversal_sql(depth: depth, relation_types: relation_types,
+                                                          requesting_principal_id: requesting_principal_id)
             db = Helpers::DataModels.apollo_entry.db
             entries = db.fetch(sql, entry_id: entry_id, depth: depth, relation_types: relation_types,
+                                   requesting_principal_id: requesting_principal_id,
                                    spread_factor: Helpers::GraphQuery.spread_factor,
                                    min_activation: Helpers::GraphQuery.min_activation).all
 
@@ -297,19 +295,21 @@ module Legion
             { success: false, error: e.message }
           end
 
-          def retrieve_relevant(query: nil, limit: settings[:query][:retrieval_limit],
+          def retrieve_relevant(query: nil, limit: settings[:query][:retrieval_limit], # rubocop:disable Metrics/ParameterLists
                                 min_confidence: Helpers::GraphQuery.default_query_min_confidence,
-                                tags: nil, domain: nil, skip: false, requesting_principal_id: nil, **)
+                                status: %i[confirmed candidate], tags: nil, tag_match: :any, exclude_source_agents: [], domain: nil,
+                                skip: false, requesting_principal_id: nil, **)
             return { status: :skipped } if skip
 
             return { success: false, error: 'apollo_data_not_available' } unless Helpers::DataModels.apollo_entry_available?
+            return { success: false, error: 'invalid_tag_match' } unless %w[any all].include?(tag_match.to_s)
 
             requesting_principal_id = resolve_requesting_principal_id(requesting_principal_id)
             query = normalize_text_input(query)
             log.debug("Apollo Knowledge.retrieve_relevant query_length=#{query.length} limit=#{limit} min_confidence=#{min_confidence} tags=#{Array(tags).size} domain=#{domain.inspect}") # rubocop:disable Layout/LineLength
-            return { success: true, entries: [], count: 0 } if query.nil? || query.to_s.strip.empty?
+            return { success: true, entries: [], count: 0 } if query.to_s.strip.empty?
 
-            embedding = embed_text(query)
+            embedding = embed_text(query, task: :query)
             if embedding.nil?
               log.warn('Apollo Knowledge.retrieve_relevant embedding unavailable; returning empty result')
               return { success: true, entries: [], count: 0, degraded: :no_embedding }
@@ -317,7 +317,8 @@ module Legion
 
             query_options = {
               limit: limit, min_confidence: min_confidence,
-              statuses: %w[confirmed candidate], tags: Sequel.pg_array(Array(tags).map(&:to_s)),
+              statuses: Array(status).map(&:to_s), tags: Sequel.pg_array(Array(tags).map(&:to_s)),
+              tag_match: tag_match, exclude_source_agents: Array(exclude_source_agents).map(&:to_s),
               domain: domain&.to_s, requesting_principal_id: requesting_principal_id&.to_i
             }
             sql = Helpers::GraphQuery.build_semantic_search_sql(**query_options)
@@ -333,12 +334,7 @@ module Legion
               )
             end
 
-            formatted = entries.map do |entry|
-              { id: entry[:id], content: entry[:content], content_type: entry[:content_type],
-                confidence: entry[:confidence], distance: entry[:distance]&.to_f,
-                tags: entry[:tags], source_agent: entry[:source_agent],
-                knowledge_domain: entry[:knowledge_domain] }
-            end
+            formatted = entries.map { |entry| format_entry(entry) }
 
             log.info("Apollo Knowledge.retrieve_relevant results=#{formatted.size} limit=#{limit}")
             { success: true, entries: formatted, count: formatted.size }
@@ -357,7 +353,7 @@ module Legion
             allowed = allowed_domains_for(target_domain)
 
             dataset = conn[:apollo_entries]
-                      .where(status: 'confirmed')
+                      .where(status: 'confirmed', access_scope: 'global')
                       .where { confidence >= min_confidence }
                       .limit(limit)
 
@@ -414,6 +410,28 @@ module Legion
 
           private
 
+          def persist_ingest(content:, content_type:, context:, metadata:, content_hash:, embedding:)
+            Helpers::DataModels.apollo_entry.db.transaction do
+              corroborated, existing_id = find_corroboration(
+                embedding: embedding, content_type: content_type, metadata: metadata
+              )
+              unless corroborated
+                existing_id = create_candidate_entry(
+                  content: content, content_type: content_type, context: context,
+                  metadata: metadata, content_hash: content_hash, embedding: embedding
+                )
+              end
+              raise Sequel::Error, 'entry_persistence_failed' unless existing_id
+
+              upsert_expertise(source_agent: metadata[:source_agent], domain: metadata[:domain])
+              Helpers::DataModels.apollo_access_log.create(
+                entry_id: existing_id, agent_id: metadata[:source_agent], action: 'ingest'
+              )
+              { success: true, entry_id: existing_id, status: corroborated ? 'corroborated' : 'candidate',
+                corroborated: corroborated, contradictions: [] }
+            end
+          end
+
           def ingest_early_return_error(content:, content_type:, tags:)
             if content.strip.empty?
               safe_tags = Array(tags).map(&:to_s).map { |t| t.gsub(/[\r\n]+/, ' ') }
@@ -439,10 +457,10 @@ module Legion
             Helpers::Confidence::CONTENT_TYPES.include?(sym) ? sym : :observation
           end
 
-          def embed_text(text)
+          def embed_text(text, task: :document)
             text = normalize_text_input(text)
             log.debug("Apollo Knowledge.embed_text text_length=#{text.length}")
-            result = Legion::LLM::Call::Embeddings.generate(text: text)
+            result = Legion::LLM::Call::Embeddings.generate(text: text, task: task)
             vector = result.is_a?(Hash) ? result[:vector] : result
             if usable_embedding?(vector)
               log.debug("Apollo Knowledge.embed_text vector_dimensions=#{vector.length}")
@@ -495,10 +513,10 @@ module Legion
             return nil unless hash
 
             dataset = Helpers::DataModels.apollo_entry
-                                         .where(content_hash: hash)
+                                         .where(content_hash: hash, access_scope: access_scope)
                                          .exclude(status: 'archived')
 
-            dataset = dataset.where(identity_principal_id: identity_principal_id) if access_scope == 'private' && identity_principal_id
+            dataset = dataset.where(identity_principal_id: identity_principal_id) if access_scope != 'global'
 
             existing = dataset.first
             existing&.update(confidence: [existing.confidence + Helpers::Confidence.retrieval_boost, 1.0].min)
@@ -552,7 +570,9 @@ module Legion
             log.info("Apollo Knowledge.handle_ingest created entry_id=#{new_entry.id} status=candidate domain=#{metadata[:domain]} source_agent=#{metadata[:source_agent]} access_scope=#{metadata[:access_scope]}") # rubocop:disable Layout/LineLength
             new_entry.id
           rescue Sequel::UniqueConstraintViolation => e
-            winner = entry_model.where(content_hash: content_hash).exclude(status: 'archived').first
+            winner_scope = entry_model.where(content_hash: content_hash, access_scope: metadata[:access_scope]).exclude(status: 'archived')
+            winner_scope = winner_scope.where(identity_principal_id: metadata[:identity_principal_id]) if metadata[:access_scope] != 'global'
+            winner = winner_scope.first
             if winner
               log.warn("Apollo Knowledge.create_candidate_entry race_dedup entry_id=#{winner.id} content_hash=#{content_hash} error=#{e.message}")
               return winner.id
@@ -566,17 +586,25 @@ module Legion
             query.to_s.strip.length < 3
           end
 
-          def list_entries_chronologically(query:, limit:, status:, status_defaulted:, tags:, domain:, requesting_principal_id: nil)
+          def list_entries_chronologically(query:, limit:, status:, status_defaulted:, tags:, domain:, # rubocop:disable Metrics/ParameterLists
+                                           min_confidence:, requesting_principal_id: nil, tag_match: :any, exclude_source_agents: [])
             log.debug("Apollo Knowledge.list_entries_chronologically limit=#{limit} statuses=#{Array(status).join(',')} status_defaulted=#{status_defaulted} tags=#{Array(tags).size} domain=#{domain || 'nil'}") # rubocop:disable Layout/LineLength
             dataset = Helpers::DataModels.apollo_entry.exclude(status: 'archived')
             requested = Array(status).map(&:to_s).reject(&:empty?)
             dataset = dataset.where(status: requested) unless status_defaulted || requested.empty?
-            dataset = dataset.where(Sequel.lit('tags && ?', Sequel.pg_array(Array(tags)))) if tags && !Array(tags).empty?
-            dataset = dataset.where(knowledge_domain: domain) if domain && !domain.to_s.empty?
+            unless Array(tags).empty?
+              tag_operator = tag_match.to_s == 'all' ? '@>' : '&&'
+              dataset = dataset.where(Sequel.lit("tags #{tag_operator} ?", Sequel.pg_array(Array(tags))))
+            end
+            dataset = dataset.where { confidence >= min_confidence }
+            if Array(exclude_source_agents).any?
+              dataset = dataset.where(Sequel.lit('(source_agent IS NULL OR source_agent NOT IN ?)', Array(exclude_source_agents).map(&:to_s)))
+            end
+            dataset = dataset.where(knowledge_domain: domain) unless domain.to_s.empty?
 
             if requesting_principal_id
               dataset = dataset.where(
-                Sequel.lit(Legion::Extensions::Apollo::Helpers::GraphQuery.access_scope_sql,
+                Sequel.lit(Legion::Extensions::Apollo::Helpers::GraphQuery.access_scope_sql(global_only: requesting_principal_id.zero?),
                            requesting_principal_id: requesting_principal_id.to_i)
               )
             end
@@ -786,7 +814,12 @@ module Legion
             end
           end
 
-          def resolve_process_identity
+          def resolve_process_identity(principal_id: UNSET, identity_id: UNSET, canonical_name: UNSET)
+            unless principal_id.equal?(UNSET)
+              return { principal_id:   principal_id,
+                       identity_id:    identity_id.equal?(UNSET) ? nil : identity_id,
+                       canonical_name: canonical_name.equal?(UNSET) ? nil : canonical_name }
+            end
             return { principal_id: nil, identity_id: nil, canonical_name: nil } unless defined?(Legion::Identity::Process)
 
             {

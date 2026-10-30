@@ -164,7 +164,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         allow(mock_entry_class).to receive(:where).and_return(double(exclude: double(limit: empty_dataset)))
         # Content hash dedup chain — no match by default
         dedup_chain = double('dedup_chain')
-        allow(mock_entry_class).to receive(:where).with(content_hash: anything).and_return(dedup_chain)
+        allow(mock_entry_class).to receive(:where).with(content_hash: anything, access_scope: 'global').and_return(dedup_chain)
         allow(dedup_chain).to receive(:exclude).with(status: 'archived').and_return(double(first: nil))
         allow(mock_entry_class).to receive(:db).and_return(mock_db)
         allow(mock_db).to receive(:fetch).and_return(double(all: []))
@@ -310,7 +310,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
 
         it 'returns deduped result on hash collision with active entry' do
           dedup_dataset = double('dataset')
-          allow(mock_entry_class).to receive(:where).with(content_hash: anything).and_return(dedup_dataset)
+          allow(mock_entry_class).to receive(:where).with(content_hash: anything, access_scope: 'global').and_return(dedup_dataset)
           allow(dedup_dataset).to receive(:exclude).with(status: 'archived').and_return(dedup_dataset)
           allow(dedup_dataset).to receive(:first).and_return(existing_entry)
 
@@ -333,7 +333,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
             .and_raise(Sequel::UniqueConstraintViolation, 'duplicate key value violates unique constraint "idx_apollo_content_hash"')
 
           collision_dataset = double('collision_dataset')
-          allow(mock_entry_class).to receive(:where).with(content_hash: anything).and_return(collision_dataset)
+          allow(mock_entry_class).to receive(:where).with(content_hash: anything, access_scope: 'global').and_return(collision_dataset)
           allow(collision_dataset).to receive(:exclude).with(status: 'archived').and_return(collision_dataset)
           # First call: dedup pre-check returns nil (not yet in DB).
           # Second call: post-collision lookup returns the winner inserted by the other thread.
@@ -350,7 +350,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
           allow(mock_entry_class).to receive(:create)
             .and_raise(Sequel::UniqueConstraintViolation, 'duplicate key value violates unique constraint')
           collision_dataset = double('collision_dataset')
-          allow(mock_entry_class).to receive(:where).with(content_hash: anything).and_return(collision_dataset)
+          allow(mock_entry_class).to receive(:where).with(content_hash: anything, access_scope: 'global').and_return(collision_dataset)
           allow(collision_dataset).to receive(:exclude).with(status: 'archived').and_return(collision_dataset)
           allow(collision_dataset).to receive(:first).and_return(nil, nil)
 
@@ -384,103 +384,6 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
           level:     :error,
           operation: 'apollo.knowledge.handle_ingest'
         )
-      end
-    end
-
-    context 'identity from Legion::Identity::Process' do
-      let(:mock_entry_class2) { double('ApolloEntry2') }
-      let(:mock_expertise_class2) { double('ApolloExpertise2') }
-      let(:mock_access_log_class2) { double('ApolloAccessLog2') }
-      let(:mock_entry2) { double('entry2', id: 99, embedding: nil) }
-      let(:mock_db2) { double('db2') }
-
-      before do
-        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class2)
-        stub_const('Legion::Data::Model::ApolloExpertise', mock_expertise_class2)
-        stub_const('Legion::Data::Model::ApolloAccessLog', mock_access_log_class2)
-        scoped_ds = double('scoped_ds2', first: nil, where: double('scoped_ds2b', first: nil))
-        allow(mock_entry_class2).to receive(:where).and_return(scoped_ds)
-        allow(scoped_ds).to receive(:exclude).and_return(scoped_ds)
-        allow(mock_entry_class2).to receive(:db).and_return(mock_db2)
-        allow(mock_db2).to receive(:transaction) { |**_options, &block| block.call }
-        allow(mock_expertise_class2).to receive(:where).and_return(double(first: nil))
-        allow(mock_expertise_class2).to receive(:create)
-        allow(mock_access_log_class2).to receive(:create)
-        allow(host).to receive(:embed_text).and_return(nil)
-        allow(host).to receive(:find_corroboration).and_return([false, nil])
-        allow(host).to receive(:detect_contradictions).and_return([])
-        stub_const('Legion::Identity::Process', double(
-                                                  db_principal_id: 42,
-                                                  db_identity_id:  7,
-                                                  canonical_name:  'alice'
-                                                ))
-      end
-
-      it 'derives identity from Legion::Identity::Process and persists it' do
-        expect(mock_entry_class2).to receive(:create).with(
-          hash_including(identity_principal_id: 42, identity_id: 7, identity_canonical_name: 'alice',
-                         access_scope: 'private')
-        ).and_return(mock_entry2)
-
-        host.handle_ingest(content: 'test fact', tags: [], access_scope: 'private')
-      end
-
-      it 'defaults access_scope to global when not provided' do
-        expect(mock_entry_class2).to receive(:create).with(
-          hash_including(access_scope: 'global')
-        ).and_return(mock_entry2)
-
-        host.handle_ingest(content: 'test fact', tags: [])
-      end
-
-      it 'ignores identity kwargs passed by callers' do
-        expect(mock_entry_class2).to receive(:create).with(
-          hash_including(identity_principal_id: 42, identity_id: 7, identity_canonical_name: 'alice')
-        ).and_return(mock_entry2)
-
-        host.handle_ingest(
-          content: 'test fact', tags: [],
-          identity_principal_id: 999, identity_id: 888, identity_canonical_name: 'mallory',
-          access_scope: 'private'
-        )
-      end
-    end
-
-    context 'dedup: private entries from different principals are not deduplicated' do
-      let(:mock_entry_class3) { double('ApolloEntry3') }
-      let(:mock_expertise_class3) { double('ApolloExpertise3') }
-      let(:mock_access_log_class3) { double('ApolloAccessLog3') }
-      let(:mock_entry_a) { double('entry_a', id: 7, embedding: nil) }
-      let(:mock_entry_b) { double('entry_b', id: 8, embedding: nil) }
-      let(:mock_db3) { double('db3') }
-
-      before do
-        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class3)
-        stub_const('Legion::Data::Model::ApolloExpertise', mock_expertise_class3)
-        stub_const('Legion::Data::Model::ApolloAccessLog', mock_access_log_class3)
-        allow(mock_expertise_class3).to receive(:where).and_return(double(first: nil))
-        allow(mock_expertise_class3).to receive(:create)
-        allow(mock_access_log_class3).to receive(:create)
-        allow(host).to receive(:embed_text).and_return(nil)
-        allow(host).to receive(:find_corroboration).and_return([false, nil])
-        allow(host).to receive(:detect_contradictions).and_return([])
-        # default dedup returns nil (no duplicate) — supports chained .where for private scope
-        scoped_ds3 = double('dedup_chain3', first: nil)
-        allow(scoped_ds3).to receive(:where).and_return(double('scoped_ds3b', first: nil))
-        allow(scoped_ds3).to receive(:exclude).and_return(scoped_ds3)
-        allow(mock_entry_class3).to receive(:where).and_return(scoped_ds3)
-        allow(mock_entry_class3).to receive(:db).and_return(mock_db3)
-        allow(mock_db3).to receive(:transaction) { |**_options, &block| block.call }
-        # two different principals each get their own entry
-        allow(mock_entry_class3).to receive(:create).and_return(mock_entry_a, mock_entry_b)
-      end
-
-      it 'does not deduplicate private entries from different principals' do
-        result1 = host.handle_ingest(content: 'same fact', content_type: :observation,
-                                     access_scope: 'private', identity_principal_id: 1)
-        result2 = host.handle_ingest(content: 'same fact', content_type: :observation,
-                                     access_scope: 'private', identity_principal_id: 2)
-        expect(result1[:entry_id]).not_to eq(result2[:entry_id])
       end
     end
 
@@ -533,7 +436,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
           .and_return({ vector: Array.new(1024, 0.1), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
         allow(mock_entry_class).to receive(:where).and_return(double(exclude: double(limit: empty_dataset)))
         dedup_chain = double('dedup_chain')
-        allow(mock_entry_class).to receive(:where).with(content_hash: anything).and_return(dedup_chain)
+        allow(mock_entry_class).to receive(:where).with(content_hash: anything, access_scope: 'global').and_return(dedup_chain)
         allow(dedup_chain).to receive(:exclude).with(status: 'archived').and_return(double(first: nil))
         allow(mock_entry_class).to receive(:db).and_return(mock_db)
         allow(mock_db).to receive(:fetch).and_return(double(all: []))

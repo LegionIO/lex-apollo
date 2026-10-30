@@ -60,6 +60,44 @@ module Legion
             halt 400, json_dump({ error: "invalid JSON: #{e.message}" })
           end
 
+          def apollo_request_identity(resolve_identity_id: false)
+            identity = { identity_principal_id: nil, identity_id: nil, identity_canonical_name: nil }
+            claims = env['legion.auth']
+            caller = env['legion.principal']
+            return identity unless claims.is_a?(Hash) && !claims.empty? && caller
+            return identity if caller.canonical_name.to_s.empty?
+
+            return identity unless defined?(Legion::Data::Model::Identity::Principal)
+
+            principal = Legion::Data::Model::Identity::Principal[
+              canonical_name: caller.canonical_name, kind: caller.kind.to_s, active: true
+            ]
+            return identity unless principal && principal[:id].is_a?(Integer) && principal[:id].positive?
+
+            identity[:identity_principal_id] = principal[:id]
+            identity[:identity_canonical_name] = caller.canonical_name
+            identity[:identity_id] = apollo_request_identity_id(caller: caller, principal_id: principal[:id]) if resolve_identity_id
+            identity
+          rescue Sequel::Error => e
+            handle_exception(e, level: :warn, operation: 'apollo.api.request_identity')
+            { identity_principal_id: nil, identity_id: nil, identity_canonical_name: nil }
+          end
+
+          def apollo_request_identity_id(caller:, principal_id:)
+            return unless defined?(Legion::Data::Model::Identity::Provider) && defined?(Legion::Data::Model::Identity::Identity)
+            return if caller.source.nil? || caller.principal_id.nil?
+
+            provider = Legion::Data::Model::Identity::Provider[name: caller.source.to_s]
+            return unless provider
+
+            identity = Legion::Data::Model::Identity::Identity[
+              principal_id: principal_id, provider_id: provider[:id], provider_identity_key: caller.principal_id.to_s, active: true
+            ]
+            identity && identity[:id]
+          end
+        end
+
+        helpers do
           def runner
             @runner ||= begin
               obj = Object.new
@@ -89,12 +127,15 @@ module Legion
           halt 400, json_dump({ error: 'query is required' }) unless req[:query]
 
           query_options = {
-            query:          req[:query],
-            limit:          req[:limit] || 10,
-            min_confidence: req[:min_confidence] || 0.3,
-            tags:           req[:tags],
-            domain:         req[:domain],
-            agent_id:       req[:agent_id] || 'api'
+            query:                   req[:query],
+            limit:                   req[:limit] || 10,
+            min_confidence:          req[:min_confidence] || 0.3,
+            tags:                    req[:tags],
+            tag_match:               req[:tag_match] || :any,
+            exclude_source_agents:   req[:exclude_source_agents] || [],
+            domain:                  req[:domain],
+            agent_id:                req[:agent_id] || 'api',
+            requesting_principal_id: apollo_request_identity[:identity_principal_id] || 0
           }
           query_options[:status] = req[:status] if req.key?(:status)
 
@@ -108,6 +149,12 @@ module Legion
           req = json_body
           halt 400, json_dump({ error: 'content is required' }) unless req[:content]
           halt 400, json_dump({ error: 'content_type is required' }) unless req[:content_type]
+          scope = req.fetch(:access_scope, 'global')
+          halt 400, json_dump({ error: 'invalid access_scope' }) unless %w[global private team].include?(scope)
+          identity = apollo_request_identity(resolve_identity_id: true)
+          if scope != 'global' && identity[:identity_principal_id].nil?
+            halt 403, json_dump({ error: 'authenticated principal is required for restricted writes' })
+          end
 
           result = runner.handle_ingest(
             content:          req[:content],
@@ -117,7 +164,11 @@ module Legion
             source_provider:  req[:source_provider],
             source_channel:   req[:source_channel],
             knowledge_domain: req[:knowledge_domain],
-            context:          req[:context] || {}
+            submitted_by:     req[:submitted_by],
+            submitted_from:   req[:submitted_from],
+            access_scope:     scope,
+            context:          req[:context] || {},
+            **identity
           )
           status result[:success] ? 201 : 500
           json_dump(result)
@@ -129,10 +180,11 @@ module Legion
           halt 400, json_dump({ error: 'entry_id is required' }) unless req[:entry_id]
 
           result = runner.handle_traverse(
-            entry_id:       req[:entry_id],
-            depth:          req[:depth] || 2,
-            relation_types: req[:relation_types],
-            agent_id:       req[:agent_id] || 'api'
+            entry_id:                req[:entry_id],
+            depth:                   req[:depth] || 2,
+            relation_types:          req[:relation_types],
+            agent_id:                req[:agent_id] || 'api',
+            requesting_principal_id: apollo_request_identity[:identity_principal_id] || 0
           )
           status result[:success] ? 200 : 500
           json_dump(result)
@@ -143,13 +195,19 @@ module Legion
           req = json_body
           halt 400, json_dump({ error: 'query is required' }) unless req[:query]
 
-          result = runner.retrieve_relevant(
-            query:          req[:query],
-            limit:          req[:limit] || 5,
-            min_confidence: req[:min_confidence] || 0.3,
-            tags:           req[:tags],
-            domain:         req[:domain]
-          )
+          retrieve_options = {
+            query:                   req[:query],
+            limit:                   req[:limit] || 5,
+            min_confidence:          req[:min_confidence] || 0.3,
+            tags:                    req[:tags],
+            tag_match:               req[:tag_match] || :any,
+            exclude_source_agents:   req[:exclude_source_agents] || [],
+            domain:                  req[:domain],
+            requesting_principal_id: apollo_request_identity[:identity_principal_id] || 0
+          }
+          retrieve_options[:status] = req[:status] if req.key?(:status)
+
+          result = runner.retrieve_relevant(**retrieve_options)
           status result[:success] ? 200 : 500
           json_dump(result)
         end
@@ -157,8 +215,9 @@ module Legion
         # Deprecate entry
         post '/api/apollo/entries/:id/deprecate' do
           result = runner.deprecate_entry(
-            entry_id: params[:id],
-            reason:   json_body[:reason] || 'deprecated via API'
+            entry_id:                params[:id],
+            reason:                  json_body[:reason] || 'deprecated via API',
+            requesting_principal_id: apollo_request_identity[:identity_principal_id] || 0
           )
           halt 503, json_dump({ success: false, error: 'apollo_data_not_available' }) if result[:action] == :deprecate
 

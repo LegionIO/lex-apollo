@@ -28,7 +28,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'legion-json', '>= 1.2.1'
   spec.add_dependency 'legion-logging', '>= 1.3.2'
   spec.add_dependency 'legion-settings', '>= 1.3.14'
-  spec.add_dependency 'legion-transport', '>= 1.3.9'
+  spec.add_dependency 'legion-transport', '>= 1.4.23'
 
   spec.add_development_dependency 'rspec', '~> 3.0'
   spec.add_development_dependency 'rubocop'

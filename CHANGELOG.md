@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.45] - 2026-10-30
+
+### Fixed
+- Enforce caller scope on HTTP reads, deprecation, and every traversal hop; reject inaccessible seeds and hidden bridges, omit archived graph entries, and export only global confirmed mesh knowledge.
+- Resolve HTTP ownership from authenticated framework principals, not request-body identity fields or receiving-process identity. Preserve explicit producer ownership and provenance through ingestion and writeback-store decoding; reject ownerless private/team writes.
+- Restrict content-hash deduplication and race recovery to the same scope and private/team owner, preventing cross-owner IDs or confidence updates.
+- Add `tag_match: :all` for conjunctive conversation tags while retaining default `:any`; apply confidence and source-agent exclusions to semantic queries, retrieval, and browse fallback.
+- Dispatch canonical `legion.apollo` query/retrieve/traverse requests to the correct handlers and publish correlated, confirmed RabbitMQ replies. Preserve reply routing across retries and propagate unroutable, rejected, or timed-out publications.
+- Preserve request filters, source metadata, and supplied embeddings on the wire; keep domain `content_type` in the JSON body without overriding the AMQP JSON content type.
+- Request query embeddings for search and document embeddings for ingestion.
+
+### Changed
+- Require `legion-transport >= 1.4.23` for envelope and per-publication options.
+- This server release does not migrate the core client's legacy exchange/payload, redesign global SQLite/vector or content-hash schemas, or establish cross-provider embedding model/dimension provenance.
+
 ## [0.4.44] - 2026-10-30
 
 ### Fixed

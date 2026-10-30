@@ -20,10 +20,10 @@ module Legion
                     domain: nil, agent_id: 'unknown', **)
             if local_service_available?
               knowledge_host.handle_query(query: text, limit: limit, min_confidence: min_confidence,
-                                          tags: tags, domain: domain, agent_id: agent_id)
+                                          tags: tags, domain: domain, agent_id: agent_id, **)
             elsif transport_available?
               publish_query(action: :query, query: text, limit: limit, min_confidence: min_confidence,
-                            tags: tags, domain: domain)
+                            tags: tags, domain: domain, agent_id: agent_id, **)
             else
               { success: false, error: :no_path_available }
             end
@@ -32,22 +32,22 @@ module Legion
           def retrieve(text:, limit: 5, min_confidence: Helpers::GraphQuery.default_query_min_confidence, tags: nil, domain: nil, **)
             if local_service_available?
               knowledge_host.retrieve_relevant(query: text, limit: limit, min_confidence: min_confidence,
-                                               tags: tags, domain: domain)
+                                               tags: tags, domain: domain, **)
             elsif transport_available?
-              publish_query(action: :query, query: text, limit: limit, min_confidence: min_confidence,
-                            tags: tags, domain: domain)
+              publish_query(action: :retrieve, query: text, limit: limit, min_confidence: min_confidence,
+                            tags: tags, domain: domain, **)
             else
               { success: false, error: :no_path_available }
             end
           end
 
-          def ingest(content:, content_type:, tags: [], source_agent: 'unknown', **)
+          def ingest(content:, content_type:, tags: [], source_agent: 'unknown', **options)
             if local_service_available?
               knowledge_host.handle_ingest(content: content, content_type: content_type,
-                                           tags: tags, source_agent: source_agent, **)
+                                           tags: tags, source_agent: source_agent, **options)
             elsif transport_available?
-              publish_ingest(content: content, content_type: content_type,
-                             tags: tags, source_agent: source_agent, **)
+              publish_ingest(**request_process_identity(options: options), content: content, content_type: content_type,
+                                                                           tags: tags, source_agent: source_agent, **options)
             else
               { success: false, error: :no_path_available }
             end
@@ -56,10 +56,10 @@ module Legion
           def traverse(entry_id:, depth: Helpers::GraphQuery.default_depth, relation_types: nil, agent_id: 'unknown', **)
             if local_service_available?
               knowledge_host.handle_traverse(entry_id: entry_id, depth: depth,
-                                             relation_types: relation_types, agent_id: agent_id)
+                                             relation_types: relation_types, agent_id: agent_id, **)
             elsif transport_available?
               publish_query(action: :traverse, entry_id: entry_id, depth: depth,
-                            relation_types: relation_types)
+                            relation_types: relation_types, agent_id: agent_id, **)
             else
               { success: false, error: :no_path_available }
             end
@@ -68,7 +68,7 @@ module Legion
           private
 
           def knowledge_host
-            @knowledge_host ||= Object.new.extend(Knowledge)
+            @knowledge_host ||= Object.new.extend(Legion::Extensions::Apollo::Runners::Knowledge)
           end
 
           def local_service_available?
@@ -80,8 +80,22 @@ module Legion
             defined?(Legion::Transport::Connection) && transport_session_open?
           end
 
+          def request_process_identity(options:)
+            return {} if options.key?(:identity_principal_id)
+            return {} unless defined?(Legion::Identity::Process)
+
+            identity = {}
+            identity[:identity_principal_id] = Legion::Identity::Process.db_principal_id unless options.key?(:identity_principal_id)
+            identity[:identity_id] = Legion::Identity::Process.db_identity_id unless options.key?(:identity_id)
+            identity[:identity_canonical_name] = Legion::Identity::Process.canonical_name unless options.key?(:identity_canonical_name)
+            identity.compact
+          rescue StandardError => e
+            handle_exception(e, level: :warn, operation: 'apollo.request.process_identity')
+            raise
+          end
+
           def publish_query(**payload)
-            Transport::Messages::Query.new(**payload).publish
+            Legion::Extensions::Apollo::Transport::Messages::Query.new(**payload).publish
             { success: true, dispatched: :transport, payload: payload }
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'apollo.request.publish_query')
@@ -89,7 +103,7 @@ module Legion
           end
 
           def publish_ingest(**payload)
-            Transport::Messages::Ingest.new(**payload).publish
+            Legion::Extensions::Apollo::Transport::Messages::Ingest.new(**payload).publish
             { success: true, dispatched: :transport, payload: payload }
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'apollo.request.publish_ingest')

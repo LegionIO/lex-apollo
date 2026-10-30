@@ -98,6 +98,24 @@ Startup explicitly binds the ingest, query, writeback-store, and writeback-vecto
 
 Automatic writeback checks research tool calls in `Legion::LLM::Inference::Response#tools`, accepting typed tools and symbol/string-keyed hashes. Existing response `tool_calls` and enrichment-based tool history remain supported. Responses must meet the configured minimum content length; Apollo context alone does not qualify a response for capture.
 
+### Service Request Contract
+
+The canonical exchange is `legion.apollo`, routing key `legion.apollo.query`. Requests use `action: "query"`, `"retrieve"`, or `"traverse"`; query text is the `query` field. Omitted action defaults to `query`. `Runners::Request.query` and `.retrieve` accept Ruby `text:` and translate it to the wire field. This release does not bridge the core client's older `apollo` exchange or `text` payload.
+
+RabbitMQ callers supply `reply_to` and `correlation_id` as AMQP properties (body fields are accepted when properties are absent). Replies contain the actual Knowledge result, use the default exchange and supplied queue, and retain correlation. Unsupported actions and invalid request fields receive structured errors. Reply publication uses mandatory routing and publisher confirms; failure reaches subscription retry handling, preserving reply metadata. Requests without `reply_to` remain fire-and-forget; `Request` returns dispatch status, not a synchronous remote result.
+
+Search/retrieval accept `status`, `tags`, `domain`, `min_confidence`, `exclude_source_agents`, and `tag_match`. The default `tag_match: :any` means tag overlap. Use `tag_match: :all` with both `llm_conversation_history` and the conversation-specific tag to isolate one conversation. Filtering also applies to chronological browse fallback. Search uses embedding task `:query`; ingestion uses `:document`.
+
+### Ownership Boundaries
+
+HTTP reads and deprecation derive the database principal from authenticated `legion.auth` / `legion.principal` middleware state. JSON identity fields are not trusted. Anonymous or unmapped callers see only global entries; private/team ingestion requires a resolved owner. Authentication middleware must populate those environment values before mounting this standalone API. Statistics retain their existing global aggregate behavior.
+
+Broker producers are trusted to supply database principal IDs. Missing or null request principals mean global-only visibility, and missing ingestion ownership stays null rather than becoming the receiving service's identity. Producer scope, identity, provenance, context, and supplied embeddings survive ingestion and writeback-store decoding. Direct internal Knowledge calls retain their existing nil-principal/process-identity semantics.
+
+Traversal checks the seed and every hop: inaccessible and archived nodes cannot bridge into visible results. Mesh export includes only global confirmed entries. Content-hash reuse requires matching scope and, for private/team entries, owner; the current database-wide uniqueness constraint can still reject equal content across different owners rather than create separate rows.
+
+Coordinated client wire migration, synchronous retrieval deadlines/fan-out, SQLite/vector schema support, and embedding model/dimension provenance remain separate cross-repository work. This release does not repair the existing writeback-vectorizer dispatch path.
+
 ### Service Mode
 
 Service actors include:
@@ -115,7 +133,7 @@ Service actors include:
 
 After text embedding is complete, an ingest commits its Entry change (including a corroboration boost), expertise bookkeeping, and ingest access log in one database transaction. Contradiction scanning is queued only after that transaction commits. Failed entry, expertise, access-log, or corroboration-side-effect writes leave no partial row, confidence boost, or queued contradiction work.
 
-Content-hash uniqueness conflicts use a nested savepoint. If another transaction committed the winner, Apollo records against that winner; if no winner can be read after rollback, the ingest fails rather than reporting a nil or partial success.
+Content-hash uniqueness conflicts use a nested savepoint. If another transaction committed a winner in the same scope and owner boundary, Apollo records against that winner; if no permitted winner can be read after rollback, the ingest fails rather than reporting a nil, foreign, or partial success.
 
 Apollo preflights Entry, Expertise, and AccessLog before ingestion writes anything; a missing required model rejects the request without a partial entry. Semantic queries require AccessLog before embedding, lookup, or confidence boosts so reads remain auditable. Traversal requires it only when a non-`unknown` agent causes an audit write. Relation remains optional for statistics, but corroboration does not promote a candidate unless it can persist the matching relation.
 
@@ -154,7 +172,7 @@ See `helpers/confidence.rb` for all constants and math helpers.
 
 ### Client mode
 - Ruby >= 3.4
-- RabbitMQ (via `legion-transport`)
+- RabbitMQ (via `legion-transport >= 1.4.23`)
 
 ### Service mode
 - PostgreSQL with pgvector extension

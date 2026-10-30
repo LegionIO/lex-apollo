@@ -12,6 +12,10 @@ module Legion
           def check_subtask?  = false
           def generate_task?  = false
 
+          def process_message(message, metadata, delivery_info)
+            { identity_principal_id: nil, identity_id: nil, identity_canonical_name: nil }.merge(super)
+          end
+
           def enabled? # rubocop:disable Legion/Extension/ActorEnabledSideEffects
             defined?(Legion::Extensions::Apollo::Runners::Knowledge) &&
               Legion.const_defined?(:Transport, false)
