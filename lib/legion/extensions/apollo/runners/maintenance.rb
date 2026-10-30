@@ -3,6 +3,7 @@
 require_relative '../helpers/confidence'
 require_relative '../helpers/data_models'
 require_relative '../helpers/similarity'
+require_relative '../helpers/graph_query'
 
 module Legion
   module Extensions
@@ -66,38 +67,21 @@ module Legion
             { decayed: 0, archived: 0, error: e.message }
           end
 
-          def check_corroboration(**) # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity
+          def check_corroboration(**)
             unless Helpers::DataModels.apollo_entry_available?
               log.warn('Apollo Maintenance.check_corroboration skipped: apollo_data_not_available')
               return { success: false, error: 'apollo_data_not_available' }
             end
 
             candidates = Helpers::DataModels.apollo_entry.where(status: 'candidate').exclude(embedding: nil).limit(100).all
-            confirmed = Helpers::DataModels.apollo_entry.where(status: 'confirmed').exclude(embedding: nil).limit(500).all
-            log.debug("Apollo Maintenance.check_corroboration candidates=#{candidates.size} confirmed=#{confirmed.size}")
+            log.debug("Apollo Maintenance.check_corroboration candidates=#{candidates.size}")
 
             promoted = 0
 
             candidates.each do |candidate|
-              match = confirmed.find do |conf|
-                next unless conf.content_type == candidate.content_type
-
-                sim = Helpers::Similarity.cosine_similarity(
-                  vec_a: candidate.embedding, vec_b: conf.embedding
-                )
-                Helpers::Similarity.above_corroboration_threshold?(similarity: sim)
-              end
+              match = corroboration_match_for(candidate: candidate)
 
               next unless match
-
-              candidate_provider = candidate.respond_to?(:source_provider) ? candidate.source_provider : nil
-              match_provider     = match.respond_to?(:source_provider) ? match.source_provider : nil
-              both_known = known_provider?(candidate_provider) && known_provider?(match_provider)
-              next if both_known && candidate_provider == match_provider
-
-              candidate_channel = candidate.respond_to?(:source_channel) ? candidate.source_channel : nil
-              match_channel = match.respond_to?(:source_channel) ? match.source_channel : nil
-              next if candidate_channel && match_channel && candidate_channel == match_channel
 
               candidate.update(
                 status:       'confirmed',
@@ -125,6 +109,31 @@ module Legion
           end
 
           private
+
+          def corroboration_match_for(candidate:)
+            scope = candidate.access_scope || 'global'
+            return nil if scope != 'global' && candidate.identity_principal_id.nil?
+
+            evidence = Helpers::DataModels.apollo_entry
+                                          .where(status: 'confirmed', content_type: candidate.content_type,
+                                                 knowledge_domain: candidate.knowledge_domain, access_scope: scope)
+                                          .exclude(embedding: nil)
+            if scope != 'global'
+              evidence = evidence.where(
+                Sequel.lit(Legion::Extensions::Apollo::Helpers::GraphQuery.access_scope_sql,
+                           requesting_principal_id: candidate.identity_principal_id)
+              )
+            end
+
+            evidence.limit(500).find do |entry|
+              both_known = known_provider?(candidate.source_provider) && known_provider?(entry.source_provider)
+              next if both_known && candidate.source_provider == entry.source_provider
+              next if candidate.source_channel && candidate.source_channel == entry.source_channel
+
+              similarity = Helpers::Similarity.cosine_similarity(vec_a: candidate.embedding, vec_b: entry.embedding)
+              Helpers::Similarity.above_corroboration_threshold?(similarity: similarity)
+            end
+          end
 
           def known_provider?(provider)
             !provider.nil? && !provider.to_s.empty? && provider.to_s != 'unknown'

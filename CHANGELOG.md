@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.34] - 2026-10-29
+
+### Fixed
+- Scope ingestion and maintenance corroboration to matching domains, content types, access scopes, and eligible lifecycle states (#32).
+- Reuse query visibility rules for private ownership and shared-team membership; unresolved ownership cannot corroborate restricted knowledge.
+- Search past dependent sources instead of allowing the first same-source match to hide eligible independent evidence.
+
 ## [0.4.33] - 2026-10-29
 
 ### Fixed

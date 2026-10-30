@@ -54,21 +54,7 @@ module Legion
             conditions << 'e.tags && CAST(:tags AS text[])' if tags&.any?
             conditions << 'e.knowledge_domain = :domain' if domain
 
-            if requesting_principal_id
-              conditions << <<~SCOPE_SQL.strip
-                (e.access_scope = 'global'
-                 OR (e.access_scope = 'private'
-                     AND (e.identity_principal_id = :requesting_principal_id
-                          OR e.identity_id IN (SELECT id FROM identities WHERE principal_id = :requesting_principal_id)))
-                 OR (e.access_scope = 'team'
-                     AND EXISTS (
-                       SELECT 1 FROM identity_group_memberships igm1
-                       JOIN identity_group_memberships igm2 ON igm1.group_id = igm2.group_id
-                       WHERE igm1.principal_id = :requesting_principal_id
-                         AND igm2.principal_id = e.identity_principal_id
-                     )))
-              SCOPE_SQL
-            end
+            conditions << access_scope_sql if requesting_principal_id
 
             where_clause = conditions.join(' AND ')
 
@@ -81,6 +67,22 @@ module Legion
                 AND e.embedding IS NOT NULL
               ORDER BY e.embedding <=> CAST(:embedding AS vector)
               LIMIT :limit
+            SQL
+          end
+
+          def access_scope_sql
+            <<~SQL
+              (access_scope = 'global'
+               OR (access_scope = 'private'
+                   AND (identity_principal_id = :requesting_principal_id
+                        OR identity_id IN (SELECT id FROM identities WHERE principal_id = :requesting_principal_id)))
+               OR (access_scope = 'team'
+                   AND EXISTS (
+                     SELECT 1 FROM identity_group_memberships igm1
+                     JOIN identity_group_memberships igm2 ON igm1.group_id = igm2.group_id
+                     WHERE igm1.principal_id = :requesting_principal_id
+                       AND igm2.principal_id = identity_principal_id
+                   )))
             SQL
           end
         end

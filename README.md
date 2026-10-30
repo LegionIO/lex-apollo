@@ -106,7 +106,8 @@ Apollo is wired into the GAIA tick cycle at the `knowledge_retrieval` phase (pha
 Entries have a confidence score between 0.0 and 1.0:
 
 - New entries start at `INITIAL_CONFIDENCE` (0.5) with status `candidate`
-- Corroboration from a semantically similar entry (cosine > 0.9) boosts confidence by 0.3 and promotes to `confirmed`
+- Eligible semantically similar evidence (cosine >= 0.9) boosts confidence by up to 0.3; the periodic corroboration checker promotes candidates supported by independent evidence to `confirmed`.
+- Corroboration stays within the same knowledge domain, content type, and access scope, and only uses `candidate` or `confirmed` evidence. Private evidence requires the same resolved owner; team evidence requires shared identity-group membership. Unresolved private/team ownership does not corroborate.
 - Each retrieval adds a small boost (+0.02, capped at 1.0)
 - Confidence decays hourly by factor 0.998; entries below 0.1 are archived
 - The GAIA write gate (`meets_write_gate?`) requires confidence > 0.6 and novelty > 0.3 for the tick write-back path

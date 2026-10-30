@@ -113,9 +113,7 @@ module Legion
                                        identity_id: identity[:identity_id],
                                        identity_canonical_name: identity[:canonical_name])
 
-            corroborated, existing_id = find_corroboration(
-              embedding, content_type_sym, metadata[:source_agent], metadata[:source_channel]
-            )
+            corroborated, existing_id = find_corroboration(embedding: embedding, content_type: content_type_sym, metadata: metadata)
 
             if corroborated
               log.info("Apollo Knowledge.handle_ingest corroborated entry_id=#{existing_id} source_agent=#{metadata[:source_agent]}")
@@ -488,7 +486,7 @@ module Legion
               source_channel:          truncate_for_column(source_channel, 100),
               submitted_by:            truncate_for_column(submitted_by, 255),
               submitted_from:          truncate_for_column(submitted_from, 255),
-              access_scope:            access_scope || 'global',
+              access_scope:            (access_scope || 'global').to_s,
               identity_principal_id:   identity_principal_id.is_a?(Integer) ? identity_principal_id : nil,
               identity_id:             identity_id.is_a?(Integer) ? identity_id : nil,
               identity_canonical_name: identity_canonical_name&.to_s&.slice(0, 255) }
@@ -548,14 +546,9 @@ module Legion
             dataset = dataset.where(knowledge_domain: domain) if domain && !domain.to_s.empty?
 
             if requesting_principal_id
-              pid = requesting_principal_id.to_i
               dataset = dataset.where(
-                Sequel.lit(
-                  "(access_scope = 'global' " \
-                  "OR (access_scope = 'private' AND (identity_principal_id = ? OR identity_id IN (SELECT id FROM identities WHERE principal_id = ?))) " \
-                  "OR (access_scope = 'team' AND EXISTS (SELECT 1 FROM identity_group_memberships igm1 JOIN identity_group_memberships igm2 ON igm1.group_id = igm2.group_id WHERE igm1.principal_id = ? AND igm2.principal_id = identity_principal_id)))", # rubocop:disable Layout/LineLength
-                  pid, pid, pid
-                )
+                Sequel.lit(Legion::Extensions::Apollo::Helpers::GraphQuery.access_scope_sql,
+                           requesting_principal_id: requesting_principal_id.to_i)
               )
             end
 
@@ -682,15 +675,24 @@ module Legion
             false
           end
 
-          def find_corroboration(embedding, content_type_sym, source_agent, source_channel = nil)
+          def find_corroboration(embedding:, content_type:, metadata:)
             return [false, nil] unless embedding
+            return [false, nil] if metadata[:access_scope] != 'global' && metadata[:identity_principal_id].nil?
 
+            source_agent = metadata[:source_agent]
+            source_channel = metadata[:source_channel]
             scan_limit = settings[:corroboration][:scan_limit]
-            log.debug("Apollo Knowledge.find_corroboration content_type=#{content_type_sym} source_agent=#{source_agent} source_channel=#{source_channel || 'nil'} scan_limit=#{scan_limit}") # rubocop:disable Layout/LineLength
             existing = Helpers::DataModels.apollo_entry
-                                          .where(content_type: content_type_sym)
+                                          .where(content_type: content_type, knowledge_domain: metadata[:domain],
+                                                 access_scope: metadata[:access_scope], status: %w[candidate confirmed])
                                           .exclude(embedding: nil)
-                                          .limit(scan_limit)
+            if metadata[:access_scope] != 'global'
+              existing = existing.where(
+                Sequel.lit(Legion::Extensions::Apollo::Helpers::GraphQuery.access_scope_sql,
+                           requesting_principal_id: metadata[:identity_principal_id])
+              )
+            end
+            existing = existing.limit(scan_limit)
 
             existing.each do |entry|
               next unless entry.embedding

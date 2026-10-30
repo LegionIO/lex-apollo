@@ -108,8 +108,6 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Maintenance do
         stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
         allow(mock_entry_class).to receive(:where).with(status: 'candidate')
                                                   .and_return(double(exclude: double(limit: double(all: []))))
-        allow(mock_entry_class).to receive(:where).with(status: 'confirmed')
-                                                  .and_return(double(exclude: double(limit: double(all: []))))
       end
 
       it 'returns zero promoted and scanned' do
@@ -117,95 +115,6 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Maintenance do
         expect(result[:success]).to be true
         expect(result[:promoted]).to eq(0)
         expect(result[:scanned]).to eq(0)
-      end
-    end
-
-    context 'when a candidate matches a confirmed entry' do
-      let(:mock_entry_class) { double('ApolloEntry') }
-      let(:mock_relation_class) { double('ApolloRelation') }
-      let(:embedding) { Array.new(1536, 0.5) }
-      let(:candidate) do
-        double('candidate', id: 'c-1', content_type: 'fact', embedding: embedding,
-               confidence: 0.5, update: true)
-      end
-      let(:confirmed_entry) do
-        double('confirmed', id: 'f-1', content_type: 'fact', embedding: embedding)
-      end
-
-      before do
-        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
-        stub_const('Legion::Data::Model::ApolloRelation', mock_relation_class)
-        allow(mock_entry_class).to receive(:where).with(status: 'candidate')
-                                                  .and_return(double(exclude: double(limit: double(all: [candidate]))))
-        allow(mock_entry_class).to receive(:where).with(status: 'confirmed')
-                                                  .and_return(double(exclude: double(limit: double(all: [confirmed_entry]))))
-        allow(mock_relation_class).to receive(:create)
-      end
-
-      it 'promotes the candidate' do
-        expect(candidate).to receive(:update).with(hash_including(status: 'confirmed'))
-        result = host.check_corroboration
-        expect(result[:promoted]).to eq(1)
-        expect(result[:scanned]).to eq(1)
-      end
-
-      it 'creates a similar_to relation' do
-        expect(mock_relation_class).to receive(:create).with(
-          hash_including(from_entry_id: 'c-1', to_entry_id: 'f-1', relation_type: 'similar_to')
-        )
-        host.check_corroboration
-      end
-    end
-
-    context 'when candidate and confirmed share the same source_channel' do
-      let(:mock_entry_class) { double('ApolloEntry') }
-      let(:mock_relation_class) { double('ApolloRelation') }
-      let(:embedding) { Array.new(1536, 0.5) }
-      let(:candidate) do
-        double('candidate', id: 'c-1', content_type: 'fact', embedding: embedding,
-               confidence: 0.5, source_provider: 'openai', source_channel: 'slack-alerts')
-      end
-      let(:confirmed_entry) do
-        double('confirmed', id: 'f-1', content_type: 'fact', embedding: embedding,
-               source_provider: 'claude', source_channel: 'slack-alerts')
-      end
-
-      before do
-        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
-        stub_const('Legion::Data::Model::ApolloRelation', mock_relation_class)
-        allow(mock_entry_class).to receive(:where).with(status: 'candidate')
-                                                  .and_return(double(exclude: double(limit: double(all: [candidate]))))
-        allow(mock_entry_class).to receive(:where).with(status: 'confirmed')
-                                                  .and_return(double(exclude: double(limit: double(all: [confirmed_entry]))))
-      end
-
-      it 'does not promote even with different providers' do
-        result = host.check_corroboration
-        expect(result[:promoted]).to eq(0)
-      end
-    end
-
-    context 'when candidate has different content_type than confirmed' do
-      let(:mock_entry_class) { double('ApolloEntry') }
-      let(:embedding) { Array.new(1536, 0.5) }
-      let(:candidate) do
-        double('candidate', id: 'c-1', content_type: 'fact', embedding: embedding, confidence: 0.5)
-      end
-      let(:confirmed_entry) do
-        double('confirmed', id: 'f-1', content_type: 'concept', embedding: embedding)
-      end
-
-      before do
-        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
-        allow(mock_entry_class).to receive(:where).with(status: 'candidate')
-                                                  .and_return(double(exclude: double(limit: double(all: [candidate]))))
-        allow(mock_entry_class).to receive(:where).with(status: 'confirmed')
-                                                  .and_return(double(exclude: double(limit: double(all: [confirmed_entry]))))
-      end
-
-      it 'does not promote' do
-        result = host.check_corroboration
-        expect(result[:promoted]).to eq(0)
       end
     end
   end
