@@ -79,7 +79,7 @@ module Legion
             SQL
           end
 
-          def access_scope_sql(qualified: false, global_only: false)
+          def access_scope_sql(qualified: false, global_only: false, **)
             prefix = qualified ? 'e.' : ''
             return "#{prefix}access_scope = 'global'" if global_only
 

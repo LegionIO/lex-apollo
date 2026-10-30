@@ -38,7 +38,7 @@ module Legion
             @query_response_knowledge ||= Object.new.extend(Legion::Extensions::Apollo::Runners::Knowledge)
           end
 
-          def query_response_input_error(action:, request:)
+          def query_response_input_error(action:, request:, **)
             input_error = if action.to_s == 'traverse'
                             query_response_traversal_error(request: request)
                           else
@@ -55,7 +55,7 @@ module Legion
             nil
           end
 
-          def query_response_traversal_error(request:)
+          def query_response_traversal_error(request:, **)
             return 'entry_id must be a nonempty string' unless request[:entry_id].is_a?(String) && !request[:entry_id].empty?
             return 'depth must be a nonnegative integer' if request.key?(:depth) && (!request[:depth].is_a?(Integer) || request[:depth].negative?)
             return 'relation_types must be an array' if !request[:relation_types].nil? && !request[:relation_types].is_a?(Array)
@@ -63,7 +63,7 @@ module Legion
             nil
           end
 
-          def query_response_search_error(request:)
+          def query_response_search_error(request:, **)
             return 'query must be a string' unless request[:query].is_a?(String)
             return 'limit must be a positive integer' if request.key?(:limit) && (!request[:limit].is_a?(Integer) || !request[:limit].positive?)
 
@@ -74,7 +74,7 @@ module Legion
             nil
           end
 
-          def query_response_publish(result:, reply_to:, correlation_id:)
+          def query_response_publish(result:, reply_to:, correlation_id:, **)
             raise ArgumentError, 'reply_to must be a nonempty string' unless reply_to.is_a?(String) && !reply_to.empty?
 
             channel = transport_channel

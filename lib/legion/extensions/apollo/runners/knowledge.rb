@@ -128,14 +128,14 @@ module Legion
             return early_error if early_error
 
             hash = content_hash || (defined?(Helpers::Writeback) ? Helpers::Writeback.content_hash(content) : nil)
-            existing = active_duplicate_for_hash(hash, access_scope:          access_scope,
-                                                       identity_principal_id: identity[:principal_id])
+            existing = active_duplicate_for_hash(content_hash: hash, access_scope: access_scope,
+                                                 identity_principal_id: identity[:principal_id])
             if existing
               log.info("Apollo Knowledge.handle_ingest deduped entry_id=#{existing.id} source_agent=#{source_agent}")
               return { success: true, entry_id: existing.id, deduped: true }
             end
 
-            embedding = embed_text(content) unless usable_embedding?(embedding)
+            embedding = embed_text(text: content) unless usable_embedding?(embedding)
             metadata = ingest_metadata(tags: tags, knowledge_domain: knowledge_domain, source_agent: source_agent,
                                        source_provider: source_provider, source_channel: source_channel,
                                        submitted_by: submitted_by, submitted_from: submitted_from,
@@ -179,7 +179,7 @@ module Legion
               return { success: false, error: 'apollo_data_not_available' }
             end
 
-            embedding = embed_text(query, task: :query)
+            embedding = embed_text(text: query, task: :query)
             if embedding.nil?
               log.warn('Apollo Knowledge.handle_query embedding unavailable; falling back to browse query')
               return list_entries_chronologically(query: query, limit: limit, status: requested_status,
@@ -309,7 +309,7 @@ module Legion
             log.debug("Apollo Knowledge.retrieve_relevant query_length=#{query.length} limit=#{limit} min_confidence=#{min_confidence} tags=#{Array(tags).size} domain=#{domain.inspect}") # rubocop:disable Layout/LineLength
             return { success: true, entries: [], count: 0 } if query.to_s.strip.empty?
 
-            embedding = embed_text(query, task: :query)
+            embedding = embed_text(text: query, task: :query)
             if embedding.nil?
               log.warn('Apollo Knowledge.retrieve_relevant embedding unavailable; returning empty result')
               return { success: true, entries: [], count: 0, degraded: :no_embedding }
@@ -410,7 +410,7 @@ module Legion
 
           private
 
-          def persist_ingest(content:, content_type:, context:, metadata:, content_hash:, embedding:)
+          def persist_ingest(content:, content_type:, context:, metadata:, content_hash:, embedding:, **)
             Helpers::DataModels.apollo_entry.db.transaction do
               corroborated, existing_id = find_corroboration(
                 embedding: embedding, content_type: content_type, metadata: metadata
@@ -457,7 +457,7 @@ module Legion
             Helpers::Confidence::CONTENT_TYPES.include?(sym) ? sym : :observation
           end
 
-          def embed_text(text, task: :document)
+          def embed_text(text:, task: :document, **)
             text = normalize_text_input(text)
             log.debug("Apollo Knowledge.embed_text text_length=#{text.length}")
             result = Legion::LLM::Call::Embeddings.generate(text: text, task: task)
@@ -509,11 +509,11 @@ module Legion
             normalize_text_input(value)[0, max_length]
           end
 
-          def active_duplicate_for_hash(hash, access_scope: nil, identity_principal_id: nil)
-            return nil unless hash
+          def active_duplicate_for_hash(content_hash:, access_scope: nil, identity_principal_id: nil, **)
+            return nil unless content_hash
 
             dataset = Helpers::DataModels.apollo_entry
-                                         .where(content_hash: hash, access_scope: access_scope)
+                                         .where(content_hash: content_hash, access_scope: access_scope)
                                          .exclude(status: 'archived')
 
             dataset = dataset.where(identity_principal_id: identity_principal_id) if access_scope != 'global'
@@ -543,7 +543,7 @@ module Legion
               identity_canonical_name: identity_canonical_name&.to_s&.slice(0, 255) }
           end
 
-          def create_candidate_entry(content:, content_type:, context:, metadata:, content_hash:, embedding:)
+          def create_candidate_entry(content:, content_type:, context:, metadata:, content_hash:, embedding:, **)
             entry_model = Helpers::DataModels.apollo_entry
             new_entry = entry_model.db.transaction(savepoint: true) do
               entry_model.create(
@@ -587,7 +587,7 @@ module Legion
           end
 
           def list_entries_chronologically(query:, limit:, status:, status_defaulted:, tags:, domain:, # rubocop:disable Metrics/ParameterLists
-                                           min_confidence:, requesting_principal_id: nil, tag_match: :any, exclude_source_agents: [])
+                                           min_confidence:, requesting_principal_id: nil, tag_match: :any, exclude_source_agents: [], **)
             log.debug("Apollo Knowledge.list_entries_chronologically limit=#{limit} statuses=#{Array(status).join(',')} status_defaulted=#{status_defaulted} tags=#{Array(tags).size} domain=#{domain || 'nil'}") # rubocop:disable Layout/LineLength
             dataset = Helpers::DataModels.apollo_entry.exclude(status: 'archived')
             requested = Array(status).map(&:to_s).reject(&:empty?)
@@ -814,7 +814,7 @@ module Legion
             end
           end
 
-          def resolve_process_identity(principal_id: UNSET, identity_id: UNSET, canonical_name: UNSET)
+          def resolve_process_identity(principal_id: UNSET, identity_id: UNSET, canonical_name: UNSET, **)
             unless principal_id.equal?(UNSET)
               return { principal_id:   principal_id,
                        identity_id:    identity_id.equal?(UNSET) ? nil : identity_id,

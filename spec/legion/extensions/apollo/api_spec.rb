@@ -222,7 +222,7 @@ RSpec.describe Legion::Extensions::Apollo::Api do
                             status: 'confirmed', domain: 'engineering')
     end
 
-    def http_state(requests:)
+    def http_state(requests:, **)
       stdout, stderr, status = Open3.capture3(
         RbConfig.ruby, '-Ilib', '-Ispec', '-e', http_script,
         chdir: File.expand_path('../../../..', __dir__), stdin_data: JSON.generate(requests: requests)

@@ -80,7 +80,7 @@ module Legion
             defined?(Legion::Transport::Connection) && transport_session_open?
           end
 
-          def request_process_identity(options:)
+          def request_process_identity(options:, **)
             return {} if options.key?(:identity_principal_id)
             return {} unless defined?(Legion::Identity::Process)
 

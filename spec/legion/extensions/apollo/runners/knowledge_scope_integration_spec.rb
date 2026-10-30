@@ -74,7 +74,7 @@ RSpec.describe 'Apollo knowledge access boundaries' do
     RUBY
   end
 
-  def scoped_result(action:, principal: nil)
+  def scoped_result(action:, principal: nil, **)
     stdout, stderr, status = Open3.capture3(
       RbConfig.ruby, '-Ilib', '-Ispec', '-e', scope_script,
       chdir: File.expand_path('../../../../..', __dir__), stdin_data: JSON.generate(action: action, principal: principal)

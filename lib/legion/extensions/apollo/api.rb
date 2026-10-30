@@ -60,7 +60,7 @@ module Legion
             halt 400, json_dump({ error: "invalid JSON: #{e.message}" })
           end
 
-          def apollo_request_identity(resolve_identity_id: false)
+          def apollo_request_identity(resolve_identity_id: false, **)
             identity = { identity_principal_id: nil, identity_id: nil, identity_canonical_name: nil }
             claims = env['legion.auth']
             caller = env['legion.principal']
@@ -83,7 +83,7 @@ module Legion
             { identity_principal_id: nil, identity_id: nil, identity_canonical_name: nil }
           end
 
-          def apollo_request_identity_id(caller:, principal_id:)
+          def apollo_request_identity_id(caller:, principal_id:, **)
             return unless defined?(Legion::Data::Model::Identity::Provider) && defined?(Legion::Data::Model::Identity::Identity)
             return if caller.source.nil? || caller.principal_id.nil?
 

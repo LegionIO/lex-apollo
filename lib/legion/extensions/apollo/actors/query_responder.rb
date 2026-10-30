@@ -14,8 +14,8 @@ module Legion
           def check_subtask?  = false
           def generate_task?  = false
 
-          def process_message(message, metadata, delivery_info)
-            super.tap do |request|
+          def process_message(message, metadata, delivery_info, **)
+            super(message, metadata, delivery_info).tap do |request|
               request[:reply_to] = metadata.reply_to if metadata.respond_to?(:reply_to) && metadata.reply_to
               request[:correlation_id] = metadata.correlation_id if metadata.respond_to?(:correlation_id) && metadata.correlation_id
             end
@@ -31,7 +31,7 @@ module Legion
 
           private
 
-          def republish_with_retry_count(_delivery_info, metadata, payload, new_count)
+          def republish_with_retry_count(_delivery_info, metadata, payload, new_count, **)
             headers = (metadata&.headers || {}).merge(Legion::Extensions::Actors::RetryPolicy::RETRY_COUNT_HEADER => new_count)
             @queue.channel.default_exchange.publish(
               payload, routing_key: @queue.name, headers: headers, content_type: metadata&.content_type,

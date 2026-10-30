@@ -13,6 +13,7 @@
 
 ### Changed
 - Require `legion-transport >= 1.4.23` for envelope and per-publication options.
+- Use keyword-only arguments for Apollo-owned methods changed in this release and discard unused keywords with `**`; preserve required positional framework callbacks while dropping extra keywords before superclass dispatch.
 - This server release does not migrate the core client's legacy exchange/payload, redesign global SQLite/vector or content-hash schemas, or establish cross-provider embedding model/dimension provenance.
 
 ## [0.4.44] - 2026-10-30
