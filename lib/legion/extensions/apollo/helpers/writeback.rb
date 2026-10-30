@@ -31,16 +31,10 @@ module Legion
             content = response_content(response)
             return false if content.nil? || content.length < min_content_length
 
-            tool_calls = extract_tool_calls(response, enrichments)
-            research_calls = tool_calls.select { |tc| RESEARCH_TOOLS.include?(tc[:name] || tc['name']) }
-
-            return false if research_calls.empty?
-
-            apollo_results = enrichments['rag_context:apollo_results']
-            return true if apollo_results.nil? || (apollo_results[:count] || 0).zero?
-
-            # Apollo had results — only capture if LLM also did additional research
-            research_calls.any?
+            extract_tool_calls(response, enrichments).any? do |call|
+              name = call.respond_to?(:name) ? call.name : call[:name] || call['name']
+              RESEARCH_TOOLS.include?(name)
+            end
           end
 
           def build_payload(request:, response:, source_channel: nil)
@@ -147,9 +141,11 @@ module Legion
 
           def extract_tool_calls(response, enrichments)
             calls = []
-            calls += Array(response.tool_calls) if response.respond_to?(:tool_calls)
-            calls += Array(enrichments['tool_calls']) if enrichments['tool_calls']
-            calls.uniq { |tc| tc[:name] || tc['name'] }
+            calls.concat(Array(response.tools)) if response.respond_to?(:tools)
+            calls.concat(Array(response.tool_calls)) if response.respond_to?(:tool_calls)
+            calls.concat(Array(enrichments['tool_calls'])) if enrichments['tool_calls']
+            calls.uniq! { |call| call.respond_to?(:name) ? call.name : call[:name] || call['name'] }
+            calls
           end
 
           def derive_tags(query)

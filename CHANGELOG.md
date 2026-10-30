@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.38] - 2026-10-29
+
+### Fixed
+- Recognize research tools in canonical `Response.tools`, including typed tool objects and symbol/string-keyed hashes, when deciding whether to capture writeback (#36).
+- Preserve existing `tool_calls` and enrichment-based research detection; Apollo-only and non-research responses remain ineligible.
+
 ## [0.4.37] - 2026-10-29
 
 ### Fixed

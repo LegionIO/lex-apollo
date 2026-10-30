@@ -87,6 +87,8 @@ Runners build structured payloads and publish to the `legion.apollo` exchange vi
 
 Startup explicitly binds the ingest, query, writeback-store, and writeback-vectorize queues to `legion.apollo`, using each queue's name as its routing key. The `legion.apollo.gas` queue binds separately to `llm.audit` with routing key `llm.audit.complete`. Repeated startup preserves these bindings.
 
+Automatic writeback checks research tool calls in `Legion::LLM::Inference::Response#tools`, accepting typed tools and symbol/string-keyed hashes. Existing response `tool_calls` and enrichment-based tool history remain supported. Responses must meet the configured minimum content length; Apollo context alone does not qualify a response for capture.
+
 ### Service Mode
 
 Five actors run in the dedicated Apollo service process:

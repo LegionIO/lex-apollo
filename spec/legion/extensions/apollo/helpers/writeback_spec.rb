@@ -29,7 +29,7 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Writeback do
     end
 
     it 'returns true when research tools were used' do
-      enrichments = { 'tool_calls' => [{ name: 'read_file' }] }
+      enrichments = {}
       long_response = double('Response',
                              message:    { content: 'x' * 100 },
                              model:      'claude-sonnet-4-6',
@@ -44,6 +44,34 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Writeback do
       }
       long_response = double('Response', message: { content: 'x' * 100 }, tool_calls: [])
       expect(described_class.should_capture?(base_request, long_response, enrichments)).to be false
+    end
+
+    it 'recognizes canonical research tools represented by typed objects or either hash key style' do
+      response_type = Data.define(:message, :tools)
+      tool_type = Data.define(:name)
+      tools = [{ name: 'read_file' }, { 'name' => 'search_files' },
+               tool_type.new(name: 'search_content'), tool_type.new(name: 'run_command')]
+      decisions = tools.map do |tool|
+        response = response_type.new(message: { content: 'Independent research findings. ' * 4 }, tools: [tool])
+        described_class.should_capture?(base_request, response, {})
+      end
+
+      expect(decisions).to all(be true)
+    end
+
+    it 'does not mistake a non-research canonical tool for new evidence' do
+      response = Data.define(:message, :tools).new(
+        message: { content: 'An answer based only on existing Apollo knowledge. ' * 4 },
+        tools:   [Data.define(:name).new(name: 'apollo_query')]
+      )
+
+      expect(described_class.should_capture?(base_request, response, { 'rag_context:apollo_results' => { count: 3 } })).to be false
+    end
+
+    it 'retains research evidence supplied through enrichments when the final response has no tools' do
+      response = Data.define(:message, :tools).new(message: { content: 'Completed research findings. ' * 4 }, tools: [])
+
+      expect(described_class.should_capture?(base_request, response, { 'tool_calls' => [{ 'name' => 'read_file' }] })).to be true
     end
   end
 
