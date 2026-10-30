@@ -131,28 +131,29 @@ module Legion
                                        identity_id: identity[:identity_id],
                                        identity_canonical_name: identity[:canonical_name])
 
-            corroborated, existing_id = find_corroboration(embedding: embedding, content_type: content_type_sym, metadata: metadata)
-
-            if corroborated
-              log.info("Apollo Knowledge.handle_ingest corroborated entry_id=#{existing_id} source_agent=#{metadata[:source_agent]}")
-            else
-              existing_id = create_candidate_entry(
-                content: content, content_type: content_type_sym, context: context,
-                metadata: metadata, content_hash: hash, embedding: embedding
+            entry_model = Helpers::DataModels.apollo_entry
+            result = entry_model.db.transaction do
+              corroborated, existing_id = find_corroboration(
+                embedding: embedding, content_type: content_type_sym, metadata: metadata
               )
+              unless corroborated
+                existing_id = create_candidate_entry(
+                  content: content, content_type: content_type_sym, context: context,
+                  metadata: metadata, content_hash: hash, embedding: embedding
+                )
+              end
+              raise Sequel::Error, 'entry_persistence_failed' unless existing_id
+
+              upsert_expertise(source_agent: metadata[:source_agent], domain: metadata[:domain])
+              Helpers::DataModels.apollo_access_log.create(
+                entry_id: existing_id, agent_id: metadata[:source_agent], action: 'ingest'
+              )
+              { success: true, entry_id: existing_id, status: corroborated ? 'corroborated' : 'candidate',
+                corroborated: corroborated, contradictions: [] }
             end
-
-            upsert_expertise(source_agent: metadata[:source_agent], domain: metadata[:domain])
-
-            Helpers::DataModels.apollo_access_log.create(
-              entry_id: existing_id, agent_id: metadata[:source_agent], action: 'ingest'
-            )
-
-            schedule_contradiction_detection(entry_id: existing_id, embedding: embedding, content: content)
-            log.debug("Apollo Knowledge.handle_ingest complete entry_id=#{existing_id} corroborated=#{corroborated}")
-
-            { success: true, entry_id: existing_id, status: corroborated ? 'corroborated' : 'candidate',
-              corroborated: corroborated, contradictions: [] }
+            schedule_contradiction_detection(entry_id: result[:entry_id], embedding: embedding, content: content)
+            log.debug("Apollo Knowledge.handle_ingest complete entry_id=#{result[:entry_id]} corroborated=#{result[:corroborated]}")
+            result
           rescue Sequel::Error => e
             handle_exception(e, level: :error, operation: 'apollo.knowledge.handle_ingest')
             { success: false, error: e.message }
@@ -511,44 +512,40 @@ module Legion
           end
 
           def create_candidate_entry(content:, content_type:, context:, metadata:, content_hash:, embedding:)
-            new_entry = Helpers::DataModels.apollo_entry.create(
-              content:                 content,
-              content_type:            content_type,
-              confidence:              Helpers::Confidence.initial_confidence,
-              source_agent:            metadata[:source_agent],
-              source_provider:         metadata[:source_provider],
-              source_channel:          metadata[:source_channel],
-              source_context:          json_dump(context.is_a?(Hash) ? context : {}),
-              tags:                    Sequel.pg_array(metadata[:tags]),
-              status:                  'candidate',
-              knowledge_domain:        metadata[:domain],
-              submitted_by:            metadata[:submitted_by],
-              submitted_from:          metadata[:submitted_from],
-              content_hash:            content_hash,
-              access_scope:            metadata[:access_scope] || 'global',
-              identity_principal_id:   metadata[:identity_principal_id],
-              identity_id:             metadata[:identity_id],
-              identity_canonical_name: metadata[:identity_canonical_name],
-              embedding:               embedding ? Sequel.lit('?::vector', "[#{embedding.join(',')}]") : nil
-            )
+            entry_model = Helpers::DataModels.apollo_entry
+            new_entry = entry_model.db.transaction(savepoint: true) do
+              entry_model.create(
+                content:                 content,
+                content_type:            content_type,
+                confidence:              Helpers::Confidence.initial_confidence,
+                source_agent:            metadata[:source_agent],
+                source_provider:         metadata[:source_provider],
+                source_channel:          metadata[:source_channel],
+                source_context:          json_dump(context.is_a?(Hash) ? context : {}),
+                tags:                    Sequel.pg_array(metadata[:tags]),
+                status:                  'candidate',
+                knowledge_domain:        metadata[:domain],
+                submitted_by:            metadata[:submitted_by],
+                submitted_from:          metadata[:submitted_from],
+                content_hash:            content_hash,
+                access_scope:            metadata[:access_scope] || 'global',
+                identity_principal_id:   metadata[:identity_principal_id],
+                identity_id:             metadata[:identity_id],
+                identity_canonical_name: metadata[:identity_canonical_name],
+                embedding:               embedding ? Sequel.lit('?::vector', "[#{embedding.join(',')}]") : nil
+              )
+            end
             log.info("Apollo Knowledge.handle_ingest created entry_id=#{new_entry.id} status=candidate domain=#{metadata[:domain]} source_agent=#{metadata[:source_agent]} access_scope=#{metadata[:access_scope]}") # rubocop:disable Layout/LineLength
             new_entry.id
           rescue Sequel::UniqueConstraintViolation => e
-            # Race condition: another thread/process inserted the same content_hash between our
-            # dedup check and this insert. Fetch and return the winner's id so the caller can
-            # continue normally (access log, contradiction detection, etc.).
-            winner = Helpers::DataModels.apollo_entry
-                                        .where(content_hash: content_hash)
-                                        .exclude(status: 'archived')
-                                        .first
+            winner = entry_model.where(content_hash: content_hash).exclude(status: 'archived').first
             if winner
-              log.warn("Apollo Knowledge.create_candidate_entry race_dedup entry_id=#{winner.id} content_hash=#{content_hash} source_agent=#{metadata[:source_agent]}") # rubocop:disable Layout/LineLength
-              winner.id
-            else
-              handle_exception(e, level: :warn, handled: true, operation: 'apollo.knowledge.create_candidate_entry',
-                                  content_hash: content_hash)
-              nil
+              log.warn("Apollo Knowledge.create_candidate_entry race_dedup entry_id=#{winner.id} content_hash=#{content_hash} error=#{e.message}")
+              return winner.id
             end
+
+            handle_exception(e, level: :error, operation: 'apollo.knowledge.create_candidate_entry', content_hash: content_hash)
+            raise
           end
 
           def browse_query?(query)

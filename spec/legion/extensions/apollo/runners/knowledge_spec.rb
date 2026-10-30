@@ -168,6 +168,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         allow(dedup_chain).to receive(:exclude).with(status: 'archived').and_return(double(first: nil))
         allow(mock_entry_class).to receive(:db).and_return(mock_db)
         allow(mock_db).to receive(:fetch).and_return(double(all: []))
+        allow(mock_db).to receive(:transaction) { |**_options, &block| block.call }
         allow(mock_entry_class).to receive(:create).and_return(mock_entry)
         allow(mock_expertise_class).to receive(:where).and_return(double(first: nil))
         allow(mock_expertise_class).to receive(:create)
@@ -344,6 +345,20 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
           expect(result[:success]).to be true
           expect(result[:entry_id]).to eq('uuid-race-winner')
         end
+
+        it 'returns a failure when a rolled-back uniqueness conflict has no winner' do
+          allow(mock_entry_class).to receive(:create)
+            .and_raise(Sequel::UniqueConstraintViolation, 'duplicate key value violates unique constraint')
+          collision_dataset = double('collision_dataset')
+          allow(mock_entry_class).to receive(:where).with(content_hash: anything).and_return(collision_dataset)
+          allow(collision_dataset).to receive(:exclude).with(status: 'archived').and_return(collision_dataset)
+          allow(collision_dataset).to receive(:first).and_return(nil, nil)
+
+          result = host.handle_ingest(content: 'lost race content', content_type: 'fact',
+                                      source_agent: 'agent-1', content_hash: 'no-winner')
+
+          expect(result).to include(success: false, error: 'duplicate key value violates unique constraint')
+        end
       end
     end
 
@@ -375,6 +390,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
       let(:mock_expertise_class2) { double('ApolloExpertise2') }
       let(:mock_access_log_class2) { double('ApolloAccessLog2') }
       let(:mock_entry2) { double('entry2', id: 99, embedding: nil) }
+      let(:mock_db2) { double('db2') }
 
       before do
         stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class2)
@@ -383,6 +399,8 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         scoped_ds = double('scoped_ds2', first: nil, where: double('scoped_ds2b', first: nil))
         allow(mock_entry_class2).to receive(:where).and_return(scoped_ds)
         allow(scoped_ds).to receive(:exclude).and_return(scoped_ds)
+        allow(mock_entry_class2).to receive(:db).and_return(mock_db2)
+        allow(mock_db2).to receive(:transaction) { |**_options, &block| block.call }
         allow(mock_expertise_class2).to receive(:where).and_return(double(first: nil))
         allow(mock_expertise_class2).to receive(:create)
         allow(mock_access_log_class2).to receive(:create)
@@ -432,6 +450,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
       let(:mock_access_log_class3) { double('ApolloAccessLog3') }
       let(:mock_entry_a) { double('entry_a', id: 7, embedding: nil) }
       let(:mock_entry_b) { double('entry_b', id: 8, embedding: nil) }
+      let(:mock_db3) { double('db3') }
 
       before do
         stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class3)
@@ -448,6 +467,8 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         allow(scoped_ds3).to receive(:where).and_return(double('scoped_ds3b', first: nil))
         allow(scoped_ds3).to receive(:exclude).and_return(scoped_ds3)
         allow(mock_entry_class3).to receive(:where).and_return(scoped_ds3)
+        allow(mock_entry_class3).to receive(:db).and_return(mock_db3)
+        allow(mock_db3).to receive(:transaction) { |**_options, &block| block.call }
         # two different principals each get their own entry
         allow(mock_entry_class3).to receive(:create).and_return(mock_entry_a, mock_entry_b)
       end
@@ -514,6 +535,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         allow(dedup_chain).to receive(:exclude).with(status: 'archived').and_return(double(first: nil))
         allow(mock_entry_class).to receive(:db).and_return(mock_db)
         allow(mock_db).to receive(:fetch).and_return(double(all: []))
+        allow(mock_db).to receive(:transaction) { |**_options, &block| block.call }
         allow(mock_entry_class).to receive(:create).and_return(mock_entry)
         allow(mock_expertise_class).to receive(:where).and_return(double(first: nil))
         allow(mock_expertise_class).to receive(:create)

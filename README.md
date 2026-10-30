@@ -111,6 +111,12 @@ Service actors include:
 | `CorroborationChecker` | Interval | 900s | Scan pending entries for auto-confirm threshold |
 | `GasSubscriber` | Subscription | on-message | Process `llm.audit.complete` events and persist accepted GAS outputs |
 
+### Atomic Ingestion
+
+After text embedding is complete, an ingest commits its Entry change (including a corroboration boost), expertise bookkeeping, and ingest access log in one database transaction. Contradiction scanning is queued only after that transaction commits. Failed entry, expertise, access-log, or corroboration-side-effect writes leave no partial row, confidence boost, or queued contradiction work.
+
+Content-hash uniqueness conflicts use a nested savepoint. If another transaction committed the winner, Apollo records against that winner; if no winner can be read after rollback, the ingest fails rather than reporting a nil or partial success.
+
 ### GAS Persistence
 
 GAS deposits facts and synthesis through normal Knowledge ingestion. New synthesis entries remain candidates and record their original source indices plus successfully stored source entry IDs in `source_context`; existing deduplicated entries retain their metadata.

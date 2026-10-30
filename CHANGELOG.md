@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.43] - 2026-10-30
+
+### Fixed
+- Commit entry creation or corroboration, expertise bookkeeping, and ingest access logging as one transaction; queue contradiction work only after commit (#41).
+- Roll back complete ingest state when any synchronous persistence side effect fails, including a corroboration confidence update.
+- Recover content-hash races through a nested savepoint only when a committed winner exists; otherwise return a truthful failure without partial data.
+
 ## [0.4.42] - 2026-10-30
 
 ### Fixed

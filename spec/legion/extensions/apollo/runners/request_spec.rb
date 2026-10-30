@@ -152,7 +152,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Request do
       let(:mock_expertise_class) { double('ApolloExpertise') }
       let(:mock_access_log_class) { double('ApolloAccessLog') }
       let(:mock_entry) { double('entry', id: 'uuid-123', embedding: nil) }
-
+      let(:mock_db) { double('db') }
       before do
         stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
         stub_const('Legion::Data::Model::ApolloExpertise', mock_expertise_class)
@@ -162,7 +162,9 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Request do
         allow(mock_entry_class).to receive(:where).and_return(double(exclude: double(limit: double(each: nil), first: nil)))
         allow(mock_entry_class).to receive(:exclude)
           .and_return(double(exclude: double(limit: double(all: []))))
-        allow(mock_entry_class).to receive(:db).and_return(double(fetch: double(all: [])))
+        allow(mock_entry_class).to receive(:db).and_return(mock_db)
+        allow(mock_db).to receive(:fetch).and_return(double(all: []))
+        allow(mock_db).to receive(:transaction) { |**_options, &block| block.call }
         allow(mock_entry_class).to receive(:create).and_return(mock_entry)
         allow(mock_expertise_class).to receive(:where).and_return(double(first: nil))
         allow(mock_expertise_class).to receive(:create)
