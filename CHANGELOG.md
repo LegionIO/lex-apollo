@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.35] - 2026-10-29
+
+### Fixed
+- Construct request query and ingest messages with keyword payloads so Ruby 3.4+ can publish them through the real transport classes (#33).
+- Check the transport connection's actual session state instead of calling an unavailable top-level `connected?` API.
+
 ## [0.4.34] - 2026-10-29
 
 ### Fixed

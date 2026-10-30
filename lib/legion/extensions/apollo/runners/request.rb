@@ -8,6 +8,7 @@ module Legion
       module Runners
         module Request
           include Legion::Logging::Helper
+          include Legion::Transport::Helper if defined?(Legion::Transport::Helper)
           extend Legion::Logging::Helper
           extend self
 
@@ -76,13 +77,11 @@ module Legion
           end
 
           def transport_available?
-            Legion.const_defined?(:Transport, false) &&
-              Legion::Transport.respond_to?(:connected?) &&
-              Legion::Transport.connected?
+            defined?(Legion::Transport::Connection) && transport_session_open?
           end
 
           def publish_query(**payload)
-            Transport::Messages::Query.new(payload).publish
+            Transport::Messages::Query.new(**payload).publish
             { success: true, dispatched: :transport, payload: payload }
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'apollo.request.publish_query')
@@ -90,7 +89,7 @@ module Legion
           end
 
           def publish_ingest(**payload)
-            Transport::Messages::Ingest.new(payload).publish
+            Transport::Messages::Ingest.new(**payload).publish
             { success: true, dispatched: :transport, payload: payload }
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'apollo.request.publish_ingest')
