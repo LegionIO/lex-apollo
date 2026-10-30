@@ -1,5 +1,97 @@
 # Changelog
 
+## [0.4.44] - 2026-10-30
+
+### Fixed
+- Preflight required Entry, Expertise, and AccessLog models before ingestion mutates data; unavailable deployments now log the missing components and return `apollo_data_not_available` without creating partial entries (#42).
+- Refuse semantic queries that cannot be audited before embedding, lookup, or confidence boosts; preserve non-audited traversal only for the `unknown` agent.
+- Require Relation persistence before bounded corroboration promotion; keep relation statistics optional when the relation model is unavailable.
+
+## [0.4.43] - 2026-10-30
+
+### Fixed
+- Commit entry creation or corroboration, expertise bookkeeping, and ingest access logging as one transaction; queue contradiction work only after commit (#41).
+- Roll back complete ingest state when any synchronous persistence side effect fails, including a corroboration confidence update.
+- Recover content-hash races through a nested savepoint only when a committed winner exists; otherwise return a truthful failure without partial data.
+
+## [0.4.42] - 2026-10-30
+
+### Fixed
+- Retain independently sourced candidate evidence during ingest and bootstrap exactly one fresh-store confirmation through the bounded corroboration checker (#40).
+- Snapshot pre-existing confirmations so a bootstrap-derived confirmation cannot promote its paired candidate on a later scan or duplicate the relation.
+- Preserve domain, type, access scope, provider, source-channel, private-owner, and team-membership corroboration boundaries during bootstrap.
+
+## [0.4.41] - 2026-10-30
+
+### Fixed
+- Execute service-side deprecation, force decay, stale archival, and dispute resolution while retaining no-data client action envelopes (#39).
+- Archive deprecated entries with retained reason/source metadata; make identical repeats idempotent and return truthful HTTP success, missing, unavailable, and persistence-failure responses.
+- Apply the approved dispute policy: `accept`/`keep` confirms, `reject` archives, and invalid or non-disputed decisions leave state unchanged. Persist lifecycle status and decision metadata atomically.
+- Keep force decay limited to confidence multiplication and use last-update-or-creation time for stale archival.
+- Handle bodyless API requests and pass explicit payload hashes to the JSON helper so health, validation, and unavailable-data responses remain JSON.
+
+## [0.4.40] - 2026-10-30
+
+### Fixed
+- Persist GAS synthesis through normal ingestion and report separate successful entry, failed entry, persisted relation, failed relation, and skipped relation counts (#38).
+- Resolve graph sources from successful fact IDs, including deduplicated entries; reject missing endpoints, self-links, cross-scope links, weak/unsupported edges, and duplicate edges within a batch.
+- Retain synthesis provenance for successfully stored sources and continue processing independent relations after a write failure.
+- Include the existing GAS `supports_by` and `extends` relation types in the traversal vocabulary.
+
+## [0.4.39] - 2026-10-29
+
+### Fixed
+- Load the GAS runner explicitly and return its module as the subscription receiver, so audit events call `Gas.process` instead of attempting to dispatch on a String (#37).
+
+## [0.4.38] - 2026-10-29
+
+### Fixed
+- Recognize research tools in canonical `Response.tools`, including typed tool objects and symbol/string-keyed hashes, when deciding whether to capture writeback (#36).
+- Preserve existing `tool_calls` and enrichment-based research detection; Apollo-only and non-research responses remain ineligible.
+
+## [0.4.37] - 2026-10-29
+
+### Fixed
+- Dispatch the contradiction scanner through its actual actor entry point and deliberately invoke the internal private detector (#35).
+- Snapshot pending work safely, continue after individual failures, and retain only failed items for a later scan.
+- Commit contradiction relations and disputed statuses atomically after LLM checks; database failures roll back and remain retryable.
+
+## [0.4.36] - 2026-10-29
+
+### Fixed
+- Declare all five Apollo exchange-to-queue bindings explicitly for the two-exchange topology instead of relying on single-exchange inference (#34).
+- Bind the GAS subscription even when its queue class is already loaded; repeated startup remains idempotent.
+
+## [0.4.35] - 2026-10-29
+
+### Fixed
+- Construct request query and ingest messages with keyword payloads so Ruby 3.4+ can publish them through the real transport classes (#33).
+- Check the transport connection's actual session state instead of calling an unavailable top-level `connected?` API.
+
+## [0.4.34] - 2026-10-29
+
+### Fixed
+- Scope ingestion and maintenance corroboration to matching domains, content types, access scopes, and eligible lifecycle states (#32).
+- Reuse query visibility rules for private ownership and shared-team membership; unresolved ownership cannot corroborate restricted knowledge.
+- Search past dependent sources instead of allowing the first same-source match to hide eligible independent evidence.
+
+## [0.4.33] - 2026-10-29
+
+### Fixed
+- Bind semantic-search and graph-traversal values through Sequel, including tags, statuses, domains, ownership, limits, confidence thresholds, and traversal depth (#31).
+- Bind vector literals and contradiction-query limits instead of interpolating values into SQL.
+
+## [0.4.32] - 2026-10-29
+
+### Fixed
+- Preserve usable writeback embeddings during ingestion instead of generating them again, allowing storage-only nodes to persist vectors without an embedding provider (#30).
+- Reject zero, nonnumeric, and nonfinite supplied vectors before persistence; retain the existing embedding fallback when no usable vector is supplied.
+
+## [0.4.31] - 2026-10-29
+
+### Fixed
+- Detect embedding capability through the provider-agnostic SSOT router lane rather than an Ollama-specific availability check.
+
 ## [0.4.30] - 2026-07-31
 
 ### Removed

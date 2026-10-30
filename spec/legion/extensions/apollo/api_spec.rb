@@ -1,31 +1,11 @@
 # frozen_string_literal: true
 
-# Stub Sinatra before requiring api.rb so the guard `unless defined?(Sinatra)` fires.
-# This avoids a LoadError when sinatra is not in the bundle.
-unless defined?(Sinatra)
-  module Sinatra
-    class Base
-      class << self
-        def set(*, **); end
-        def before(*, &); end
-        def helpers(*, &); end
-        def get(*, &); end
-        def post(*, &); end
-        def put(*, &); end
-        def delete(*, &); end
-      end
-    end
-  end
-end
+require 'sinatra/base'
 
 require 'spec_helper'
 require 'legion/extensions/apollo/api'
 
 RSpec.describe Legion::Extensions::Apollo::Api do
-  it 'is defined as a Sinatra app' do
-    expect(described_class.superclass).to eq(Sinatra::Base)
-  end
-
   describe '.stats_payload' do
     let(:entry_model) { class_double('Legion::Data::Model::ApolloEntry') }
     let(:relation_model) { class_double('Legion::Data::Model::ApolloRelation', count: 4) }
@@ -81,6 +61,16 @@ RSpec.describe Legion::Extensions::Apollo::Api do
         'document_chunk' => 5,
         'observation'    => 1
       )
+    end
+
+    it 'keeps entry statistics available when the optional relation model is absent' do
+      hide_const('Legion::Data::Model::ApolloRelation') if defined?(Legion::Data::Model::ApolloRelation)
+      hide_const('Legion::Data::Model::Apollo::Relation') if defined?(Legion::Data::Model::Apollo::Relation)
+
+      payload = described_class.stats_payload(now: Time.utc(2026, 4, 28, 12, 0, 0))
+
+      expect(payload).to include(total_entries: 6, recent_24h: 2, avg_confidence: 0.812)
+      expect(payload).not_to have_key(:total_relations)
     end
 
     context 'when legion-data exposes namespaced Apollo models' do

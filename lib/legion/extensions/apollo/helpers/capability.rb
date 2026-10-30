@@ -8,15 +8,21 @@ module Legion
           extend Legion::Logging::Helper
           extend Legion::Settings::Helper
 
-          EMBEDDING_MODELS = %w[mxbai-embed-large bge-large snowflake-arctic-embed].freeze
           PRIVILEGE_MUTEX = Mutex.new
 
           module_function
 
+          # SSOT gate: the sole selection authority for embeddings is the
+          # router (Call::Embeddings.generate with no provider arg →
+          # Router.next_lane). can_embed? asks the one capability fact that
+          # matches that selection — is there an embedding-type lane the
+          # router can select? — against the same registry lanes the router
+          # reads. Provider-agnostic (no ollama pin, no hardcoded model
+          # list); no parallel settings-based "second domain".
           def can_embed?
             return false unless defined?(Legion::LLM) && Legion::LLM.started?
 
-            ollama_embedding_available? || cloud_embedding_configured?
+            Legion::LLM.can_embed?
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'apollo.capability.can_embed')
             false
@@ -36,24 +42,6 @@ module Legion
             settings[:data][:apollo_write] == true
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'apollo.capability.apollo_write_enabled')
-            false
-          end
-
-          def ollama_embedding_available?
-            return false unless defined?(Legion::LLM::Discovery::Ollama)
-
-            EMBEDDING_MODELS.any? { |m| Legion::LLM::Discovery::Ollama.model_available?(m) }
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'apollo.capability.ollama_embedding_available')
-            false
-          end
-
-          def cloud_embedding_configured?
-            provider = settings[:embedding][:provider]
-            model = settings[:embedding][:model]
-            !provider.nil? && !model.nil?
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'apollo.capability.cloud_embedding_configured')
             false
           end
 

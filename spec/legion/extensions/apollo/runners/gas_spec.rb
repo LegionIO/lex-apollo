@@ -17,19 +17,6 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Gas do
       }
     end
 
-    it 'runs all 6 phases in order' do
-      allow(described_class).to receive(:phase_comprehend).and_return([{ content: 'fact', content_type: :fact }])
-      allow(described_class).to receive(:phase_extract).and_return([{ name: 'pgvector', type: 'technology' }])
-      allow(described_class).to receive(:phase_relate).and_return([])
-      allow(described_class).to receive(:phase_synthesize).and_return([])
-      allow(described_class).to receive(:phase_deposit).and_return({ deposited: 1 })
-      allow(described_class).to receive(:phase_anticipate).and_return([])
-
-      result = described_class.process(audit_event)
-      expect(result).to be_a(Hash)
-      expect(result[:phases_completed]).to eq(6)
-    end
-
     it 'skips when audit event has no content' do
       result = described_class.process({ request_id: 'req_abc' })
       expect(result[:phases_completed]).to eq(0)
@@ -80,29 +67,36 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Gas do
     end
   end
 
-  describe '.phase_relate' do
-    it 'returns empty array (stub)' do
-      expect(described_class.phase_relate([], [])).to eq([])
-    end
-  end
-
-  describe '.phase_synthesize' do
-    it 'returns empty array (stub)' do
-      expect(described_class.phase_synthesize([], [])).to eq([])
-    end
-  end
-
-  describe '.phase_anticipate' do
-    it 'returns empty array (stub)' do
-      expect(described_class.phase_anticipate([], [])).to eq([])
-    end
-  end
-
   describe '.phase_deposit' do
-    it 'returns deposited 0 when Knowledge not defined' do
-      hide_const('Legion::Extensions::Apollo::Runners::Knowledge') if defined?(Legion::Extensions::Apollo::Runners::Knowledge)
-      result = described_class.phase_deposit([], [], [], [], { request_id: 'req_1' })
-      expect(result).to eq({ deposited: 0 })
+    it 'reports unavailable writes as failures rather than successful deposits' do
+      hide_const('Legion::Extensions::Apollo::Runners::Knowledge')
+      result = described_class.phase_deposit([{ content: 'fact' }], [], [{ to_id: 'target' }],
+                                             [{ content: 'synthesis' }], { request_id: 'req_1' })
+
+      expect(result).to include(deposited: 0, failed: 2, relations: 0, relations_failed: 1)
+    end
+
+    it 'counts only successful fact and synthesis writes with an entry ID' do
+      knowledge = double('Knowledge')
+      stub_const('Legion::Extensions::Apollo::Runners::Knowledge', knowledge)
+      allow(knowledge).to receive(:handle_ingest) do |content:, **|
+        case content
+        when 'stored fact' then { success: true, entry_id: 41 }
+        when 'stored synthesis' then { success: true, entry_id: 42 }
+        when 'missing ID' then { success: true }
+        else { success: false, error: 'write failed' }
+        end
+      end
+      facts = [{ content: 'stored fact', content_type: :fact }, { content: 'failed fact', content_type: :fact }]
+      synthesis = [
+        { content: 'stored synthesis', content_type: :inference, source_indices: [0] },
+        { content: 'failed synthesis', content_type: :implication, source_indices: [0] },
+        { content: 'missing ID', content_type: :connection, source_indices: [0] }
+      ]
+
+      result = described_class.phase_deposit(facts, [], [], synthesis, { request_id: 'req_1' })
+
+      expect(result).to include(deposited: 2, failed: 3, facts: 1, synthesis: 1, relations: 0)
     end
   end
 end

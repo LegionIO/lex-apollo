@@ -20,14 +20,8 @@ module Legion
           def default_query_limit          = settings[:query][:default_limit]
           def default_query_min_confidence = settings[:query][:default_min_confidence]
 
-          def build_traversal_sql(depth: default_depth, relation_types: nil, min_activation: self.min_activation, **)
-            sf = spread_factor
-            type_filter = if relation_types&.any?
-                            types = relation_types.map { |t| "'#{t}'" }.join(', ')
-                            "AND r.relation_type IN (#{types})"
-                          else
-                            ''
-                          end
+          def build_traversal_sql(relation_types: nil, **)
+            type_filter = relation_types&.any? ? 'AND r.relation_type IN :relation_types' : ''
 
             <<~SQL
               WITH RECURSIVE graph AS (
@@ -40,12 +34,12 @@ module Legion
 
                 SELECT e.id, e.content, e.content_type, e.confidence, e.tags, e.source_agent,
                        g.depth + 1,
-                       (g.activation * #{sf} * r.weight)::float
+                       (g.activation * :spread_factor * r.weight)::float
                 FROM graph g
                 JOIN apollo_relations r ON r.from_entry_id = g.id #{type_filter}
                 JOIN apollo_entries e ON e.id = r.to_entry_id
-                WHERE g.depth < #{depth}
-                  AND g.activation * #{sf} * r.weight > #{min_activation}
+                WHERE g.depth < :depth
+                  AND g.activation * :spread_factor * r.weight > :min_activation
               )
               SELECT DISTINCT ON (id) id, content, content_type, confidence, tags, source_agent,
                      depth, activation
@@ -54,51 +48,41 @@ module Legion
             SQL
           end
 
-          def build_semantic_search_sql(limit: default_query_limit, min_confidence: default_query_min_confidence,
-                                        statuses: nil, tags: nil, domain: nil,
-                                        requesting_principal_id: nil, **)
-            conditions = ["e.confidence >= #{min_confidence}"]
+          def build_semantic_search_sql(statuses: nil, tags: nil, domain: nil, requesting_principal_id: nil, **)
+            conditions = ['e.confidence >= :min_confidence']
+            conditions << 'e.status IN :statuses' if statuses&.any?
+            conditions << 'e.tags && CAST(:tags AS text[])' if tags&.any?
+            conditions << 'e.knowledge_domain = :domain' if domain
 
-            if statuses&.any?
-              status_list = statuses.map { |s| "'#{s}'" }.join(', ')
-              conditions << "e.status IN (#{status_list})"
-            end
-
-            if tags&.any?
-              tag_list = tags.map { |t| "'#{t}'" }.join(', ')
-              conditions << "e.tags && ARRAY[#{tag_list}]::text[]"
-            end
-
-            conditions << "e.knowledge_domain = '#{domain}'" if domain
-
-            if requesting_principal_id
-              pid = requesting_principal_id.to_i
-              conditions << <<~SCOPE_SQL.strip
-                (e.access_scope = 'global'
-                 OR (e.access_scope = 'private'
-                     AND (e.identity_principal_id = #{pid}
-                          OR e.identity_id IN (SELECT id FROM identities WHERE principal_id = #{pid})))
-                 OR (e.access_scope = 'team'
-                     AND EXISTS (
-                       SELECT 1 FROM identity_group_memberships igm1
-                       JOIN identity_group_memberships igm2 ON igm1.group_id = igm2.group_id
-                       WHERE igm1.principal_id = #{pid}
-                         AND igm2.principal_id = e.identity_principal_id
-                     )))
-              SCOPE_SQL
-            end
+            conditions << access_scope_sql if requesting_principal_id
 
             where_clause = conditions.join(' AND ')
 
             <<~SQL
               SELECT e.id, e.content, e.content_type, e.confidence, e.tags, e.source_agent,
                      e.access_count, e.created_at, e.knowledge_domain,
-                     (e.embedding <=> :embedding) AS distance
+                     (e.embedding <=> CAST(:embedding AS vector)) AS distance
               FROM apollo_entries e
               WHERE #{where_clause}
                 AND e.embedding IS NOT NULL
-              ORDER BY e.embedding <=> :embedding
-              LIMIT #{limit}
+              ORDER BY e.embedding <=> CAST(:embedding AS vector)
+              LIMIT :limit
+            SQL
+          end
+
+          def access_scope_sql
+            <<~SQL
+              (access_scope = 'global'
+               OR (access_scope = 'private'
+                   AND (identity_principal_id = :requesting_principal_id
+                        OR identity_id IN (SELECT id FROM identities WHERE principal_id = :requesting_principal_id)))
+               OR (access_scope = 'team'
+                   AND EXISTS (
+                     SELECT 1 FROM identity_group_memberships igm1
+                     JOIN identity_group_memberships igm2 ON igm1.group_id = igm2.group_id
+                     WHERE igm1.principal_id = :requesting_principal_id
+                       AND igm2.principal_id = identity_principal_id
+                   )))
             SQL
           end
         end

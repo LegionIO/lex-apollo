@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'open3'
+require 'rbconfig'
 require 'legion/extensions/apollo/helpers/confidence'
 require 'legion/extensions/apollo/helpers/similarity'
 require 'legion/extensions/apollo/helpers/graph_query'
@@ -55,30 +57,43 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Request do
     end
 
     context 'when only transport is available' do
-      let(:mock_transport) do
-        Module.new do
-          def self.connected?
-            true
-          end
+      it 'delivers all request operations through the real message classes and local transport' do
+        script = <<~'RUBY'
+          require 'rspec'
+          require 'spec_helper'
+          require 'json'
+          Legion::Transport::Connection.setup
+          channel = Legion::Transport::Connection.session.create_channel
+          Legion::Extensions::Apollo::Transport::Exchanges::Apollo.new('legion.apollo', channel: channel)
+          queries = []
+          ingests = []
+          Legion::Transport::Local.subscribe('legion.apollo.query') { |payload| queries << Legion::JSON.load(payload) }
+          Legion::Transport::Local.subscribe('legion.apollo.ingest') { |payload| ingests << Legion::JSON.load(payload) }
+          request = Legion::Extensions::Apollo::Runners::Request
+          results = [
+            request.query(text: 'remote query'),
+            request.retrieve(text: 'remote retrieval'),
+            request.traverse(entry_id: 'entry-1'),
+            request.ingest(content: 'remote fact', content_type: 'fact')
+          ]
+          Legion::Transport::Connection.shutdown
+          puts "APOLLO_RESULT=#{JSON.generate(results: results, queries: queries, ingests: ingests)}"
+        RUBY
+        stdout, stderr, status = Open3.capture3(
+          { 'LEGION_MODE' => 'lite' }, RbConfig.ruby, '-Ilib', '-Ispec', '-e', script,
+          chdir: File.expand_path('../../../../..', __dir__)
+        )
+        line = stdout.lines.find { |output| output.start_with?('APOLLO_RESULT=') }
+        raise "Request process failed: #{stderr}\n#{stdout}" unless status.success? && line
 
-          def self.respond_to?(method, *args)
-            method == :connected? || super
-          end
-        end
-      end
-      let(:mock_message) { double('message', publish: true) }
-
-      before do
-        hide_const('Legion::Data::Model::ApolloEntry') if defined?(Legion::Data::Model::ApolloEntry)
-        stub_const('Legion::Transport', mock_transport)
-        stub_const('Legion::Extensions::Apollo::Transport::Messages::Query',
-                   double('QueryMsg', new: mock_message))
-      end
-
-      it 'publishes via transport' do
-        result = described_class.query(text: 'test query')
-        expect(result[:success]).to be true
-        expect(result[:dispatched]).to eq(:transport)
+        state = Legion::JSON.load(line.delete_prefix('APOLLO_RESULT='))
+        expect(state[:results]).to all(include(success: true, dispatched: 'transport'))
+        expect(state[:queries]).to contain_exactly(
+          include(action: 'query', query: 'remote query'),
+          include(action: 'query', query: 'remote retrieval'),
+          include(action: 'traverse', entry_id: 'entry-1')
+        )
+        expect(state[:ingests]).to contain_exactly(include(content: 'remote fact', content_type: 'fact'))
       end
     end
 
@@ -137,7 +152,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Request do
       let(:mock_expertise_class) { double('ApolloExpertise') }
       let(:mock_access_log_class) { double('ApolloAccessLog') }
       let(:mock_entry) { double('entry', id: 'uuid-123', embedding: nil) }
-
+      let(:mock_db) { double('db') }
       before do
         stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
         stub_const('Legion::Data::Model::ApolloExpertise', mock_expertise_class)
@@ -147,7 +162,9 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Request do
         allow(mock_entry_class).to receive(:where).and_return(double(exclude: double(limit: double(each: nil), first: nil)))
         allow(mock_entry_class).to receive(:exclude)
           .and_return(double(exclude: double(limit: double(all: []))))
-        allow(mock_entry_class).to receive(:db).and_return(double(fetch: double(all: [])))
+        allow(mock_entry_class).to receive(:db).and_return(mock_db)
+        allow(mock_db).to receive(:fetch).and_return(double(all: []))
+        allow(mock_db).to receive(:transaction) { |**_options, &block| block.call }
         allow(mock_entry_class).to receive(:create).and_return(mock_entry)
         allow(mock_expertise_class).to receive(:where).and_return(double(first: nil))
         allow(mock_expertise_class).to receive(:create)

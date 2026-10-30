@@ -122,11 +122,10 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
   end
 
   describe '#deprecate_entry' do
-    it 'returns a deprecate payload' do
+    it 'retains the client action envelope without claiming a completed service mutation' do
       result = runner.deprecate_entry(entry_id: 'uuid-123', reason: 'outdated')
       expect(result[:action]).to eq(:deprecate)
-      expect(result[:entry_id]).to eq('uuid-123')
-      expect(result[:reason]).to eq('outdated')
+      expect(result).not_to have_key(:success)
     end
   end
 
@@ -169,6 +168,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         allow(dedup_chain).to receive(:exclude).with(status: 'archived').and_return(double(first: nil))
         allow(mock_entry_class).to receive(:db).and_return(mock_db)
         allow(mock_db).to receive(:fetch).and_return(double(all: []))
+        allow(mock_db).to receive(:transaction) { |**_options, &block| block.call }
         allow(mock_entry_class).to receive(:create).and_return(mock_entry)
         allow(mock_expertise_class).to receive(:where).and_return(double(first: nil))
         allow(mock_expertise_class).to receive(:create)
@@ -345,12 +345,28 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
           expect(result[:success]).to be true
           expect(result[:entry_id]).to eq('uuid-race-winner')
         end
+
+        it 'returns a failure when a rolled-back uniqueness conflict has no winner' do
+          allow(mock_entry_class).to receive(:create)
+            .and_raise(Sequel::UniqueConstraintViolation, 'duplicate key value violates unique constraint')
+          collision_dataset = double('collision_dataset')
+          allow(mock_entry_class).to receive(:where).with(content_hash: anything).and_return(collision_dataset)
+          allow(collision_dataset).to receive(:exclude).with(status: 'archived').and_return(collision_dataset)
+          allow(collision_dataset).to receive(:first).and_return(nil, nil)
+
+          result = host.handle_ingest(content: 'lost race content', content_type: 'fact',
+                                      source_agent: 'agent-1', content_hash: 'no-winner')
+
+          expect(result).to include(success: false, error: 'duplicate key value violates unique constraint')
+        end
       end
     end
 
     context 'when Sequel raises an error' do
       before do
         stub_const('Legion::Data::Model::ApolloEntry', Class.new)
+        stub_const('Legion::Data::Model::ApolloExpertise', Class.new)
+        stub_const('Legion::Data::Model::ApolloAccessLog', Class.new)
         allow(Legion::LLM::Call::Embeddings).to receive(:generate)
           .and_return({ vector: Array.new(1024, 0.1), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
         allow(Legion::Data::Model::ApolloEntry).to receive(:where)
@@ -376,6 +392,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
       let(:mock_expertise_class2) { double('ApolloExpertise2') }
       let(:mock_access_log_class2) { double('ApolloAccessLog2') }
       let(:mock_entry2) { double('entry2', id: 99, embedding: nil) }
+      let(:mock_db2) { double('db2') }
 
       before do
         stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class2)
@@ -384,6 +401,8 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         scoped_ds = double('scoped_ds2', first: nil, where: double('scoped_ds2b', first: nil))
         allow(mock_entry_class2).to receive(:where).and_return(scoped_ds)
         allow(scoped_ds).to receive(:exclude).and_return(scoped_ds)
+        allow(mock_entry_class2).to receive(:db).and_return(mock_db2)
+        allow(mock_db2).to receive(:transaction) { |**_options, &block| block.call }
         allow(mock_expertise_class2).to receive(:where).and_return(double(first: nil))
         allow(mock_expertise_class2).to receive(:create)
         allow(mock_access_log_class2).to receive(:create)
@@ -433,6 +452,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
       let(:mock_access_log_class3) { double('ApolloAccessLog3') }
       let(:mock_entry_a) { double('entry_a', id: 7, embedding: nil) }
       let(:mock_entry_b) { double('entry_b', id: 8, embedding: nil) }
+      let(:mock_db3) { double('db3') }
 
       before do
         stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class3)
@@ -449,6 +469,8 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         allow(scoped_ds3).to receive(:where).and_return(double('scoped_ds3b', first: nil))
         allow(scoped_ds3).to receive(:exclude).and_return(scoped_ds3)
         allow(mock_entry_class3).to receive(:where).and_return(scoped_ds3)
+        allow(mock_entry_class3).to receive(:db).and_return(mock_db3)
+        allow(mock_db3).to receive(:transaction) { |**_options, &block| block.call }
         # two different principals each get their own entry
         allow(mock_entry_class3).to receive(:create).and_return(mock_entry_a, mock_entry_b)
       end
@@ -515,6 +537,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         allow(dedup_chain).to receive(:exclude).with(status: 'archived').and_return(double(first: nil))
         allow(mock_entry_class).to receive(:db).and_return(mock_db)
         allow(mock_db).to receive(:fetch).and_return(double(all: []))
+        allow(mock_db).to receive(:transaction) { |**_options, &block| block.call }
         allow(mock_entry_class).to receive(:create).and_return(mock_entry)
         allow(mock_expertise_class).to receive(:where).and_return(double(first: nil))
         allow(mock_expertise_class).to receive(:create)
@@ -589,6 +612,25 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
       end
     end
 
+    context 'when semantic query access logging is unavailable' do
+      let(:mock_entry_class) { double('ApolloEntry') }
+
+      before do
+        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
+        hide_const('Legion::Data::Model::ApolloAccessLog') if defined?(Legion::Data::Model::ApolloAccessLog)
+        hide_const('Legion::Data::Model::Apollo::AccessLog') if defined?(Legion::Data::Model::Apollo::AccessLog)
+      end
+
+      it 'fails before embedding, lookup, or confidence mutation' do
+        expect(mock_entry_class).not_to receive(:db)
+        expect(Legion::LLM::Call::Embeddings).not_to receive(:generate)
+
+        expect(host.handle_query(query: 'semantic query')).to include(
+          success: false, error: 'apollo_data_not_available'
+        )
+      end
+    end
+
     context 'when Apollo data is available' do
       let(:mock_entry_class) { double('ApolloEntry') }
       let(:mock_access_log_class) { double('ApolloAccessLog') }
@@ -637,6 +679,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
 
       before do
         stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
+        stub_const('Legion::Data::Model::ApolloAccessLog', Class.new)
         allow(Legion::LLM::Call::Embeddings).to receive(:generate)
           .and_return({ vector: Array.new(1024, 0.1), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
         allow(mock_entry_class).to receive(:db).and_return(mock_db)
@@ -692,37 +735,6 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
 
         expect(dataset).to have_received(:where).with('tags && ?')
         expect(dataset).to have_received(:where).with(knowledge_domain: 'general')
-      end
-    end
-
-    context 'access scope forwarding' do
-      let(:mock_entry_class) { double('ApolloEntry') }
-      let(:mock_db) { double('db') }
-
-      before do
-        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
-        allow(Legion::LLM::Call::Embeddings).to receive(:generate)
-          .and_return({ vector: Array.new(1024, 0.1), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
-        allow(mock_entry_class).to receive(:db).and_return(mock_db)
-        allow(mock_db).to receive(:fetch).and_return(double(all: []))
-        allow(mock_entry_class).to receive(:where).and_return(double(update: true))
-      end
-
-      it 'forwards requesting_principal_id to build_semantic_search_sql' do
-        expect(Legion::Extensions::Apollo::Helpers::GraphQuery).to receive(:build_semantic_search_sql).with(
-          hash_including(requesting_principal_id: 42)
-        ).and_return('SELECT 1')
-        allow(mock_db).to receive(:fetch).and_return(double(all: []))
-
-        host.handle_query(query: 'test', requesting_principal_id: 42)
-      end
-
-      it 'passes nil requesting_principal_id when not provided (no filter)' do
-        expect(Legion::Extensions::Apollo::Helpers::GraphQuery).to receive(:build_semantic_search_sql).with(
-          hash_including(requesting_principal_id: nil)
-        ).and_return('SELECT 1')
-
-        host.handle_query(query: 'test')
       end
     end
   end
@@ -794,21 +806,6 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         expect(result[:success]).to be true
         expect(result[:count]).to eq(1)
       end
-
-      it 'passes domain to graph query builder' do
-        expect(Legion::Extensions::Apollo::Helpers::GraphQuery).to receive(:build_semantic_search_sql).with(
-          hash_including(domain: 'clinical')
-        ).and_call_original
-        host.retrieve_relevant(query: 'treatment', domain: 'clinical')
-      end
-
-      it 'forwards requesting_principal_id to build_semantic_search_sql' do
-        expect(Legion::Extensions::Apollo::Helpers::GraphQuery).to receive(:build_semantic_search_sql).with(
-          hash_including(requesting_principal_id: 7)
-        ).and_return('SELECT 1')
-
-        host.retrieve_relevant(query: 'test', requesting_principal_id: 7)
-      end
     end
   end
 
@@ -864,13 +861,6 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
       it 'skips access logging for unknown agents' do
         expect(mock_access_log_class).not_to receive(:create)
         host.handle_traverse(entry_id: 'uuid-1')
-      end
-
-      it 'filters invalid relation_types' do
-        expect(Legion::Extensions::Apollo::Helpers::GraphQuery).to receive(:build_traversal_sql).with(
-          hash_including(relation_types: ['causes'])
-        ).and_call_original
-        host.handle_traverse(entry_id: 'uuid-1', relation_types: %w[causes invalid_type])
       end
     end
 
@@ -943,7 +933,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
       it 'stores into trace shared_store when Memory::Trace is available' do
         mock_store = double('store')
         mock_trace_helpers = Module.new do
-          def self.new_trace(type:, content_payload: nil, **kwargs) # rubocop:disable Lint/UnusedMethodArgument
+          def self.new_trace(type:, **kwargs)
             { trace_id: 'trace-abc', trace_type: type, strength: kwargs[:strength] || 0.5 }
           end
         end

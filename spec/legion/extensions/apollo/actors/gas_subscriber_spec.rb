@@ -13,26 +13,16 @@ unless defined?(Legion::Extensions::Actors::Subscription)
 end
 $LOADED_FEATURES << 'legion/extensions/actors/subscription' unless $LOADED_FEATURES.include?('legion/extensions/actors/subscription')
 
-require 'legion/extensions/apollo/runners/gas'
 require 'legion/extensions/apollo/actors/gas_subscriber'
 
 RSpec.describe Legion::Extensions::Apollo::Actor::GasSubscriber do
   subject(:actor) { described_class.new }
 
-  it 'uses Gas runner_class as string' do
-    expect(actor.runner_class).to eq('Legion::Extensions::Apollo::Runners::Gas')
-  end
+  it 'dispatches an audit event through the subscription receiver contract' do
+    result = actor.runner_class.public_send(actor.runner_function, messages: [], response_content: nil)
 
-  it 'runs process function' do
-    expect(actor.runner_function).to eq('process')
-  end
-
-  it 'does not generate tasks' do
-    expect(actor.generate_task?).to be false
-  end
-
-  it 'does not check subtasks' do
-    expect(actor.check_subtask?).to be false
+    expect(result).to include(phases_completed: 0)
+    expect(result).not_to have_key(:error)
   end
 
   describe '#enabled?' do
