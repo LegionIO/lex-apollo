@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.32] - 2026-10-29
+
+### Fixed
+- Preserve usable writeback embeddings during ingestion instead of generating them again, allowing storage-only nodes to persist vectors without an embedding provider (#30).
+- Reject zero, nonnumeric, and nonfinite supplied vectors before persistence; retain the existing embedding fallback when no usable vector is supplied.
+
+## [0.4.31] - 2026-10-29
+
+### Fixed
+- Detect embedding capability through the provider-agnostic SSOT router lane rather than an Ollama-specific availability check.
+
 ## [0.4.30] - 2026-07-31
 
 ### Removed

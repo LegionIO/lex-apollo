@@ -85,7 +85,7 @@ module Legion
           def handle_ingest(content: nil, content_type: nil, tags: [], source_agent: 'unknown', # rubocop:disable Metrics/ParameterLists
                             source_provider: nil, source_channel: nil, knowledge_domain: nil,
                             submitted_by: nil, submitted_from: nil, content_hash: nil, context: {},
-                            skip: false, access_scope: 'global', **)
+                            skip: false, access_scope: 'global', embedding: nil, **)
             return { status: :skipped } if skip
 
             identity = resolve_process_identity
@@ -103,7 +103,7 @@ module Legion
               return { success: true, entry_id: existing.id, deduped: true }
             end
 
-            embedding = embed_text(content)
+            embedding = embed_text(content) unless usable_embedding?(embedding)
             content_type_sym = content_type.to_s
             metadata = ingest_metadata(tags: tags, knowledge_domain: knowledge_domain, source_agent: source_agent,
                                        source_provider: source_provider, source_channel: source_channel,
@@ -409,7 +409,7 @@ module Legion
             log.debug("Apollo Knowledge.embed_text text_length=#{text.length}")
             result = Legion::LLM::Call::Embeddings.generate(text: text)
             vector = result.is_a?(Hash) ? result[:vector] : result
-            if vector.is_a?(Array) && vector.any? && vector.any? { |v| v != 0.0 }
+            if usable_embedding?(vector)
               log.debug("Apollo Knowledge.embed_text vector_dimensions=#{vector.length}")
               vector
             else
@@ -419,6 +419,11 @@ module Legion
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'apollo.knowledge.embed_text')
             nil
+          end
+
+          def usable_embedding?(vector)
+            vector.is_a?(Array) && vector.any? { |value| value != 0.0 } &&
+              vector.all? { |value| value.is_a?(Numeric) && value.real? && value.finite? }
           end
 
           def normalize_text_input(value)
