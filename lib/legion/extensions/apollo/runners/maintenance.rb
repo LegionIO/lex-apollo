@@ -126,23 +126,26 @@ module Legion
               return { success: false, error: 'apollo_data_not_available' }
             end
 
-            candidates = Helpers::DataModels.apollo_entry.where(status: 'candidate').exclude(embedding: nil).limit(100).all
-            log.debug("Apollo Maintenance.check_corroboration candidates=#{candidates.size}")
+            entry_model = Helpers::DataModels.apollo_entry
+            candidates = entry_model.where(status: 'candidate').exclude(embedding: nil).order(:id).limit(100).all
+            confirmed_ids = entry_model.where(status: 'confirmed').select_map(:id)
+            log.debug("Apollo Maintenance.check_corroboration candidates=#{candidates.size} confirmed=#{confirmed_ids.size}")
 
             promoted = 0
-
-            candidates.each do |candidate|
-              match = corroboration_match_for(candidate: candidate)
-
+            candidates.each_with_index do |candidate, index|
+              match = corroboration_match_for(candidate: candidate, evidence_ids: confirmed_ids) ||
+                      bootstrap_match_for(candidate: candidate, candidates: candidates, candidate_index: index)
               next unless match
 
-              candidate.update(
+              bootstrap = !confirmed_ids.include?(match.id)
+              updates = {
                 status:       'confirmed',
                 confirmed_at: Time.now,
                 confidence:   Helpers::Confidence.apply_corroboration_boost(confidence: candidate.confidence),
                 updated_at:   Time.now
-              )
-
+              }
+              updates[:source_context] = bootstrap_confirmation_context(candidate) if bootstrap
+              candidate.update(updates)
               Helpers::DataModels.apollo_relation.create(
                 from_entry_id: candidate.id,
                 to_entry_id:   match.id,
@@ -150,25 +153,26 @@ module Legion
                 source_agent:  'system:corroboration',
                 weight:        Legion::Extensions::Apollo.settings[:corroboration][:relation_weight]
               )
-
               promoted += 1
             end
 
             { success: true, promoted: promoted, scanned: candidates.size }
               .tap { |result| log.info("Apollo Maintenance.check_corroboration scanned=#{result[:scanned]} promoted=#{result[:promoted]}") }
-          rescue Sequel::Error => e
+          rescue Sequel::Error, Legion::JSON::ParseError => e
             handle_exception(e, level: :error, operation: 'apollo.maintenance.check_corroboration')
             { success: false, error: e.message }
           end
 
           private
 
-          def corroboration_match_for(candidate:)
+          def corroboration_match_for(candidate:, evidence_ids:)
+            return nil if evidence_ids.empty?
+
             scope = candidate.access_scope || 'global'
             return nil if scope != 'global' && candidate.identity_principal_id.nil?
 
             evidence = Helpers::DataModels.apollo_entry
-                                          .where(status: 'confirmed', content_type: candidate.content_type,
+                                          .where(id: evidence_ids, content_type: candidate.content_type,
                                                  knowledge_domain: candidate.knowledge_domain, access_scope: scope)
                                           .exclude(embedding: nil)
             if scope != 'global'
@@ -178,14 +182,44 @@ module Legion
               )
             end
 
-            evidence.limit(500).find do |entry|
-              both_known = known_provider?(candidate.source_provider) && known_provider?(entry.source_provider)
-              next if both_known && candidate.source_provider == entry.source_provider
-              next if candidate.source_channel && candidate.source_channel == entry.source_channel
+            evidence.limit(500).find { |entry| corroborates?(candidate: candidate, entry: entry) }
+          end
 
-              similarity = Helpers::Similarity.cosine_similarity(vec_a: candidate.embedding, vec_b: entry.embedding)
-              Helpers::Similarity.above_corroboration_threshold?(similarity: similarity)
-            end
+          def bootstrap_match_for(candidate:, candidates:, candidate_index:)
+            evidence_ids = candidates.drop(candidate_index + 1).map(&:id)
+            corroboration_match_for(candidate: candidate, evidence_ids: evidence_ids)
+          end
+
+          def corroborates?(candidate:, entry:)
+            return false if candidate.id == entry.id
+            return false if bootstrap_confirmation?(entry)
+
+            both_known = known_provider?(candidate.source_provider) && known_provider?(entry.source_provider)
+            return false if both_known && candidate.source_provider == entry.source_provider
+            return false if candidate.source_channel && candidate.source_channel == entry.source_channel
+
+            similarity = Helpers::Similarity.cosine_similarity(vec_a: candidate.embedding, vec_b: entry.embedding)
+            Helpers::Similarity.above_corroboration_threshold?(similarity: similarity)
+          end
+
+          def bootstrap_confirmation_context(entry)
+            context = entry[:source_context]
+            context = Legion::JSON.load(context) if context.is_a?(String)
+            context ||= {}
+            raise Sequel::Error, 'invalid_source_context' unless context.respond_to?(:transform_keys)
+
+            Legion::JSON.dump(context.transform_keys(&:to_sym).merge(corroboration_mode: 'bootstrap'))
+          end
+
+          def bootstrap_confirmation?(entry)
+            return false unless entry.status == 'confirmed'
+
+            context = entry[:source_context]
+            context = Legion::JSON.load(context) if context.is_a?(String)
+            context.respond_to?(:[]) && (context[:corroboration_mode] || context['corroboration_mode']) == 'bootstrap'
+          rescue Legion::JSON::ParseError => e
+            handle_exception(e, level: :warn, operation: 'apollo.maintenance.bootstrap_confirmation')
+            true
           end
 
           def known_provider?(provider)

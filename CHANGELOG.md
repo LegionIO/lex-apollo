@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.42] - 2026-10-30
+
+### Fixed
+- Retain independently sourced candidate evidence during ingest and bootstrap exactly one fresh-store confirmation through the bounded corroboration checker (#40).
+- Snapshot pre-existing confirmations so a bootstrap-derived confirmation cannot promote its paired candidate on a later scan or duplicate the relation.
+- Preserve domain, type, access scope, provider, source-channel, private-owner, and team-membership corroboration boundaries during bootstrap.
+
 ## [0.4.41] - 2026-10-30
 
 ### Fixed

@@ -90,8 +90,12 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Maintenance do
 
       before do
         stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
-        allow(mock_entry_class).to receive(:where).with(status: 'candidate')
-                                                  .and_return(double(exclude: double(limit: double(all: []))))
+        candidate_dataset = double(
+          exclude: double(order: double(limit: double(all: [])))
+        )
+        confirmed_dataset = double(select_map: [])
+        allow(mock_entry_class).to receive(:where).with(status: 'candidate').and_return(candidate_dataset)
+        allow(mock_entry_class).to receive(:where).with(status: 'confirmed').and_return(confirmed_dataset)
       end
 
       it 'returns zero promoted and scanned' do

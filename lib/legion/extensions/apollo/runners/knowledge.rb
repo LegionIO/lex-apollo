@@ -705,9 +705,10 @@ module Legion
             source_agent = metadata[:source_agent]
             source_channel = metadata[:source_channel]
             scan_limit = settings[:corroboration][:scan_limit]
+            # Candidate evidence is retained for the bounded maintenance bootstrap scan.
             existing = Helpers::DataModels.apollo_entry
                                           .where(content_type: content_type, knowledge_domain: metadata[:domain],
-                                                 access_scope: metadata[:access_scope], status: %w[candidate confirmed])
+                                                 access_scope: metadata[:access_scope], status: 'confirmed')
                                           .exclude(embedding: nil)
             if metadata[:access_scope] != 'global'
               existing = existing.where(

@@ -34,6 +34,7 @@ RSpec.describe 'Apollo corroboration persistence' do
         String :source_channel
         String :embedding
         Float :confidence
+        String :source_context
         DateTime :confirmed_at
         DateTime :updated_at
       end
@@ -62,17 +63,18 @@ RSpec.describe 'Apollo corroboration persistence' do
       input[:memberships].each { |membership| db[:identity_group_memberships].insert(membership) }
       input[:identities].each { |identity| db[:identities].insert(identity) }
       runner = Object.new.extend(Legion::Extensions::Apollo::Runners::Maintenance)
-      result = runner.check_corroboration
-      state = { result: result, entries: db[:apollo_entries].order(:id).all, relations: db[:apollo_relations].all }
+      results = Array.new(input[:runs] || 1) { runner.check_corroboration }
+      state = { result: results.last, results: results, entries: db[:apollo_entries].order(:id).all,
+                relations: db[:apollo_relations].all }
       puts "APOLLO_RESULT=#{::JSON.generate(state)}"
     RUBY
   end
 
-  def corroboration_state(entries:, memberships: [], identities: [])
+  def corroboration_state(entries:, memberships: [], identities: [], runs: 1)
     stdout, stderr, status = Open3.capture3(
       RbConfig.ruby, '-Ilib', '-Ispec', '-e', corroboration_script,
       chdir:      File.expand_path('../../../../..', __dir__),
-      stdin_data: JSON.generate(entries: entries, memberships: memberships, identities: identities)
+      stdin_data: JSON.generate(entries: entries, memberships: memberships, identities: identities, runs: runs)
     )
     line = stdout.lines.find { |output| output.start_with?('APOLLO_RESULT=') }
     raise "Corroboration process failed: #{stderr}\n#{stdout}" unless status.success? && line
@@ -148,5 +150,42 @@ RSpec.describe 'Apollo corroboration persistence' do
 
     expect(state[:result]).to include(success: true, promoted: 1)
     expect(state[:relations]).to contain_exactly(hash_including(from_entry_id: 1, to_entry_id: 2))
+  end
+
+  it 'bootstraps exactly one fresh-store confirmation from independent candidate evidence' do
+    state = corroboration_state(
+      entries: [candidate, candidate.merge(id: 2, source_provider: 'claude', source_channel: 'source-b')],
+      runs:    2
+    )
+
+    expect(state[:results]).to include(hash_including(promoted: 1), hash_including(promoted: 0))
+    expect(state[:entries].map { |entry| entry[:status] }).to eq(%w[confirmed candidate])
+    expect(state[:relations]).to contain_exactly(hash_including(from_entry_id: 1, to_entry_id: 2, relation_type: 'similar_to'))
+  end
+
+  it 'does not bootstrap confirmation from the same provider or source channel' do
+    same_provider = corroboration_state(
+      entries: [candidate, candidate.merge(id: 2, source_channel: 'source-b')]
+    )
+    same_channel = corroboration_state(
+      entries: [candidate, candidate.merge(id: 2, source_provider: 'claude')]
+    )
+
+    expect(same_provider[:result]).to include(success: true, promoted: 0)
+    expect(same_channel[:result]).to include(success: true, promoted: 0)
+    expect(same_provider[:relations]).to eq([])
+    expect(same_channel[:relations]).to eq([])
+  end
+
+  it 'does not use candidate evidence owned by another private principal to bootstrap confirmation' do
+    state = corroboration_state(
+      entries: [candidate.merge(access_scope: 'private', identity_principal_id: 42),
+                candidate.merge(id: 2, access_scope: 'private', identity_principal_id: 99,
+                                source_provider: 'claude', source_channel: 'source-b')]
+    )
+
+    expect(state[:result]).to include(success: true, promoted: 0)
+    expect(state[:entries].map { |entry| entry[:status] }).to all(eq('candidate'))
+    expect(state[:relations]).to eq([])
   end
 end
