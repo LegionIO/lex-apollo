@@ -85,11 +85,28 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Maintenance do
       end
     end
 
+    context 'when relation persistence is unavailable' do
+      let(:mock_entry_class) { double('ApolloEntry') }
+
+      before do
+        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
+        hide_const('Legion::Data::Model::ApolloRelation') if defined?(Legion::Data::Model::ApolloRelation)
+        hide_const('Legion::Data::Model::Apollo::Relation') if defined?(Legion::Data::Model::Apollo::Relation)
+      end
+
+      it 'fails before scanning or promoting candidates' do
+        expect(mock_entry_class).not_to receive(:where)
+
+        expect(host.check_corroboration).to include(success: false, error: 'apollo_data_not_available')
+      end
+    end
+
     context 'when no candidates exist' do
       let(:mock_entry_class) { double('ApolloEntry') }
 
       before do
         stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
+        stub_const('Legion::Data::Model::ApolloRelation', Class.new)
         candidate_dataset = double(
           exclude: double(order: double(limit: double(all: [])))
         )

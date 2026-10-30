@@ -117,6 +117,8 @@ After text embedding is complete, an ingest commits its Entry change (including 
 
 Content-hash uniqueness conflicts use a nested savepoint. If another transaction committed the winner, Apollo records against that winner; if no winner can be read after rollback, the ingest fails rather than reporting a nil or partial success.
 
+Apollo preflights Entry, Expertise, and AccessLog before ingestion writes anything; a missing required model rejects the request without a partial entry. Semantic queries require AccessLog before embedding, lookup, or confidence boosts so reads remain auditable. Traversal requires it only when a non-`unknown` agent causes an audit write. Relation remains optional for statistics, but corroboration does not promote a candidate unless it can persist the matching relation.
+
 ### GAS Persistence
 
 GAS deposits facts and synthesis through normal Knowledge ingestion. New synthesis entries remain candidates and record their original source indices plus successfully stored source entry IDs in `source_context`; existing deduplicated entries retain their metadata.

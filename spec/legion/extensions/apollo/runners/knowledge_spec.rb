@@ -365,6 +365,8 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
     context 'when Sequel raises an error' do
       before do
         stub_const('Legion::Data::Model::ApolloEntry', Class.new)
+        stub_const('Legion::Data::Model::ApolloExpertise', Class.new)
+        stub_const('Legion::Data::Model::ApolloAccessLog', Class.new)
         allow(Legion::LLM::Call::Embeddings).to receive(:generate)
           .and_return({ vector: Array.new(1024, 0.1), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
         allow(Legion::Data::Model::ApolloEntry).to receive(:where)
@@ -610,6 +612,25 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
       end
     end
 
+    context 'when semantic query access logging is unavailable' do
+      let(:mock_entry_class) { double('ApolloEntry') }
+
+      before do
+        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
+        hide_const('Legion::Data::Model::ApolloAccessLog') if defined?(Legion::Data::Model::ApolloAccessLog)
+        hide_const('Legion::Data::Model::Apollo::AccessLog') if defined?(Legion::Data::Model::Apollo::AccessLog)
+      end
+
+      it 'fails before embedding, lookup, or confidence mutation' do
+        expect(mock_entry_class).not_to receive(:db)
+        expect(Legion::LLM::Call::Embeddings).not_to receive(:generate)
+
+        expect(host.handle_query(query: 'semantic query')).to include(
+          success: false, error: 'apollo_data_not_available'
+        )
+      end
+    end
+
     context 'when Apollo data is available' do
       let(:mock_entry_class) { double('ApolloEntry') }
       let(:mock_access_log_class) { double('ApolloAccessLog') }
@@ -658,6 +679,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
 
       before do
         stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
+        stub_const('Legion::Data::Model::ApolloAccessLog', Class.new)
         allow(Legion::LLM::Call::Embeddings).to receive(:generate)
           .and_return({ vector: Array.new(1024, 0.1), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
         allow(mock_entry_class).to receive(:db).and_return(mock_db)

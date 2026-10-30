@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.44] - 2026-10-30
+
+### Fixed
+- Preflight required Entry, Expertise, and AccessLog models before ingestion mutates data; unavailable deployments now log the missing components and return `apollo_data_not_available` without creating partial entries (#42).
+- Refuse semantic queries that cannot be audited before embedding, lookup, or confidence boosts; preserve non-audited traversal only for the `unknown` agent.
+- Require Relation persistence before bounded corroboration promotion; keep relation statistics optional when the relation model is unavailable.
+
 ## [0.4.43] - 2026-10-30
 
 ### Fixed

@@ -63,6 +63,16 @@ RSpec.describe Legion::Extensions::Apollo::Api do
       )
     end
 
+    it 'keeps entry statistics available when the optional relation model is absent' do
+      hide_const('Legion::Data::Model::ApolloRelation') if defined?(Legion::Data::Model::ApolloRelation)
+      hide_const('Legion::Data::Model::Apollo::Relation') if defined?(Legion::Data::Model::Apollo::Relation)
+
+      payload = described_class.stats_payload(now: Time.utc(2026, 4, 28, 12, 0, 0))
+
+      expect(payload).to include(total_entries: 6, recent_24h: 2, avg_confidence: 0.812)
+      expect(payload).not_to have_key(:total_relations)
+    end
+
     context 'when legion-data exposes namespaced Apollo models' do
       before do
         hide_const('Legion::Data::Model::ApolloEntry') if defined?(Legion::Data::Model::ApolloEntry)

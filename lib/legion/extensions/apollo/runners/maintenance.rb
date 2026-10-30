@@ -121,8 +121,11 @@ module Legion
           end
 
           def check_corroboration(**)
-            unless Helpers::DataModels.apollo_entry_available?
-              log.warn('Apollo Maintenance.check_corroboration skipped: apollo_data_not_available')
+            unless Helpers::DataModels.apollo_entry_available? && Helpers::DataModels.apollo_relation_available?
+              missing = []
+              missing << 'entry' unless Helpers::DataModels.apollo_entry_available?
+              missing << 'relation' unless Helpers::DataModels.apollo_relation_available?
+              log.warn("Apollo Maintenance.check_corroboration skipped: apollo_data_not_available missing=#{missing.join(',')}")
               return { success: false, error: 'apollo_data_not_available' }
             end
 

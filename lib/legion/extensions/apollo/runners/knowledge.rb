@@ -159,7 +159,7 @@ module Legion
             { success: false, error: e.message }
           end
 
-          def handle_query(query:, limit: Helpers::GraphQuery.default_query_limit, # rubocop:disable Metrics/CyclomaticComplexity, Metrics/ParameterLists
+          def handle_query(query:, limit: Helpers::GraphQuery.default_query_limit, # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/ParameterLists
                            min_confidence: Helpers::GraphQuery.default_query_min_confidence,
                            status: UNSET, tags: nil, domain: nil, agent_id: 'unknown',
                            requesting_principal_id: nil, **)
@@ -175,6 +175,11 @@ module Legion
               return list_entries_chronologically(query: query, limit: limit, status: requested_status,
                                                   status_defaulted: status_defaulted, tags: tags, domain: domain,
                                                   requesting_principal_id: requesting_principal_id)
+            end
+
+            unless Helpers::DataModels.apollo_access_log_available?
+              log.warn('Apollo Knowledge.handle_query skipped: apollo_data_not_available missing=access_log')
+              return { success: false, error: 'apollo_data_not_available' }
             end
 
             embedding = embed_text(query)
@@ -219,6 +224,11 @@ module Legion
 
           def handle_traverse(entry_id:, depth: Helpers::GraphQuery.default_depth, relation_types: nil, agent_id: 'unknown', **)
             return { success: false, error: 'apollo_data_not_available' } unless Helpers::DataModels.apollo_entry_available?
+
+            if agent_id != 'unknown' && !Helpers::DataModels.apollo_access_log_available?
+              log.warn('Apollo Knowledge.handle_traverse skipped: apollo_data_not_available missing=access_log')
+              return { success: false, error: 'apollo_data_not_available' }
+            end
 
             log.debug("Apollo Knowledge.handle_traverse entry_id=#{entry_id} depth=#{depth} relation_types=#{Array(relation_types).join(',')} agent_id=#{agent_id}") # rubocop:disable Layout/LineLength
             # Keep traversal limited to the supported relation vocabulary.
@@ -412,10 +422,14 @@ module Legion
               return { success: false, error: 'content is required' }
             end
 
-            return nil if Helpers::DataModels.apollo_entry_available?
+            missing = []
+            missing << 'entry' unless Helpers::DataModels.apollo_entry_available?
+            missing << 'expertise' unless Helpers::DataModels.apollo_expertise_available?
+            missing << 'access_log' unless Helpers::DataModels.apollo_access_log_available?
+            return nil if missing.empty?
 
             log.warn('[apollo][handle_ingest] early-return: apollo_data_not_available ' \
-                     "content_type=#{content_type}")
+                     "content_type=#{content_type} missing=#{missing.join(',')}")
             { success: false, error: 'apollo_data_not_available' }
           end
 
