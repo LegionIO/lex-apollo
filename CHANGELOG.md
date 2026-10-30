@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.36] - 2026-10-29
+
+### Fixed
+- Declare all five Apollo exchange-to-queue bindings explicitly for the two-exchange topology instead of relying on single-exchange inference (#34).
+- Bind the GAS subscription even when its queue class is already loaded; repeated startup remains idempotent.
+
 ## [0.4.35] - 2026-10-29
 
 ### Fixed

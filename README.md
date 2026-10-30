@@ -83,7 +83,9 @@ client.resolve_dispute(entry_id: 'entry-uuid', resolution: :accept)
 
 ### Client Mode
 
-Runners build structured payloads and publish to the `apollo` exchange via RabbitMQ. No PostgreSQL or pgvector dependency is needed in the calling agent. Transport requires `Legion::Transport` to be loaded (the `if defined?(Legion::Transport)` guard in the entry point handles this automatically).
+Runners build structured payloads and publish to the `legion.apollo` exchange via RabbitMQ. No PostgreSQL or pgvector dependency is needed in the calling agent. Transport requires `Legion::Transport` to be loaded.
+
+Startup explicitly binds the ingest, query, writeback-store, and writeback-vectorize queues to `legion.apollo`, using each queue's name as its routing key. The `legion.apollo.gas` queue binds separately to `llm.audit` with routing key `llm.audit.complete`. Repeated startup preserves these bindings.
 
 ### Service Mode
 

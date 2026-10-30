@@ -22,11 +22,8 @@ module Legion
           end
 
           def create_queue
-            return if queues.const_defined?(:GasSubscriber, false)
-
-            queues.const_set(:GasSubscriber, Apollo::Transport::Queues::GasSubscriber) unless queues.const_defined?(:GasSubscriber, false)
-            exchange_object = Apollo::Transport::Exchanges::LlmAudit.new
-            queue_object = Apollo::Transport::Queues::GasSubscriber.new
+            exchange_object = Legion::Extensions::Apollo::Transport::Exchanges::LlmAudit.new
+            queue_object = Legion::Extensions::Apollo::Transport::Queues::GasSubscriber.new
             queue_object.bind(exchange_object, routing_key: 'llm.audit.complete')
           end
         end
