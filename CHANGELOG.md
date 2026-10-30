@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.39] - 2026-10-29
+
+### Fixed
+- Load the GAS runner explicitly and return its module as the subscription receiver, so audit events call `Gas.process` instead of attempting to dispatch on a String (#37).
+
 ## [0.4.38] - 2026-10-29
 
 ### Fixed
