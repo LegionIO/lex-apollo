@@ -56,7 +56,9 @@ module Legion
           end
 
           def query_response_traversal_error(request:, **)
-            return 'entry_id must be a nonempty string' unless request[:entry_id].is_a?(String) && !request[:entry_id].empty?
+            entry_id = request[:entry_id]
+            valid_id = (entry_id.is_a?(String) && !entry_id.empty?) || (entry_id.is_a?(Integer) && entry_id.positive?)
+            return 'entry_id must be a nonempty string or positive integer' unless valid_id
             return 'depth must be a nonnegative integer' if request.key?(:depth) && (!request[:depth].is_a?(Integer) || request[:depth].negative?)
             return 'relation_types must be an array' if !request[:relation_types].nil? && !request[:relation_types].is_a?(Array)
 

@@ -157,17 +157,19 @@ module Legion
           end
 
           result = runner.handle_ingest(
-            content:          req[:content],
-            content_type:     req[:content_type],
-            tags:             req[:tags] || [],
-            source_agent:     req[:source_agent] || 'api',
-            source_provider:  req[:source_provider],
-            source_channel:   req[:source_channel],
-            knowledge_domain: req[:knowledge_domain],
-            submitted_by:     req[:submitted_by],
-            submitted_from:   req[:submitted_from],
-            access_scope:     scope,
-            context:          req[:context] || {},
+            content:              req[:content],
+            content_type:         req[:content_type],
+            tags:                 req[:tags] || [],
+            source_agent:         req[:source_agent] || 'api',
+            source_provider:      req[:source_provider],
+            source_channel:       req[:source_channel],
+            knowledge_domain:     req[:knowledge_domain],
+            submitted_by:         req[:submitted_by],
+            submitted_from:       req[:submitted_from],
+            access_scope:         scope,
+            context:              req[:context] || {},
+            embedding:            req[:embedding],
+            embedding_provenance: req[:embedding_provenance],
             **identity
           )
           status result[:success] ? 201 : 500

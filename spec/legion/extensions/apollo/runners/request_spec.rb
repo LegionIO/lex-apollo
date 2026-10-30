@@ -15,8 +15,8 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Request do
     described_class.instance_variable_set(:@knowledge_host, nil)
 
     embeddings_mod = Module.new do
-      def self.generate(*, **)
-        { vector: Array.new(1024, 0.1), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 }
+      def self.generate(task: :document, **)
+        ApolloSpecEmbedding.result(task: task)
       end
     end
     stub_const('Legion::LLM::Call::Embeddings', embeddings_mod)
@@ -24,35 +24,68 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Request do
 
   describe '.query' do
     context 'when local service is available' do
-      let(:mock_entry_class) { double('ApolloEntry') }
-      let(:mock_access_log_class) { double('ApolloAccessLog') }
-      let(:mock_db) { double('db') }
-      let(:sample_entries) do
-        [{ id: 'uuid-1', content: 'test', content_type: 'fact',
-           confidence: 0.8, distance: 0.15, tags: ['ruby'], source_agent: 'agent-1' }]
-      end
+      let(:db) { Sequel.sqlite }
 
       before do
-        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
-        stub_const('Legion::Data::Model::ApolloAccessLog', mock_access_log_class)
-        allow(Legion::LLM::Call::Embeddings).to receive(:generate)
-          .and_return({ vector: Array.new(1024, 0.1), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
-        allow(mock_entry_class).to receive(:db).and_return(mock_db)
-        allow(mock_db).to receive(:fetch).and_return(double(all: sample_entries))
-        allow(mock_entry_class).to receive(:where).and_return(double(update: true))
-        allow(mock_access_log_class).to receive(:create)
+        db.create_table(:apollo_entries) do
+          primary_key :id
+          %i[content content_type source_agent tags knowledge_domain status access_scope embedding embedding_space_id embedding_provenance].each do |column|
+            String column
+          end
+          Integer :identity_principal_id
+          Integer :identity_id
+          Integer :embedding_dimensions
+          Integer :access_count, default: 0
+          Float :confidence
+          DateTime :created_at
+          DateTime :updated_at
+        end
+        db.create_table(:apollo_access_log) do
+          primary_key :id
+          Integer :entry_id
+          String :agent_id
+          String :action
+        end
+        db.create_table(:identities) do
+          primary_key :id
+          Integer :principal_id
+        end
+        db.create_table(:identity_group_memberships) do
+          Integer :principal_id
+          Integer :group_id
+        end
+        stub_const('Legion::Data::Model::Apollo::Entry', Class.new(Sequel::Model(db[:apollo_entries])))
+        stub_const('Legion::Data::Model::Apollo::AccessLog', Class.new(Sequel::Model(db[:apollo_access_log])))
       end
 
-      it 'applies caller filters and identity to the local database query and access log' do
-        expect(mock_db).to receive(:fetch).with(
-          anything, hash_including(statuses: ['candidate'], domain: 'security', requesting_principal_id: 41,
-                                   tag_match: :all, exclude_source_agents: ['other'])
-        ).and_return(double(all: sample_entries))
-        expect(mock_access_log_class).to receive(:create).with(hash_including(agent_id: 'reader'))
+      after { db.disconnect }
 
-        result = described_class.query(text: 'test query', status: ['candidate'], domain: 'security', agent_id: 'reader',
-                                       requesting_principal_id: 41, tag_match: :all, exclude_source_agents: ['other'])
-        expect(result).to include(success: true, entries: [include(id: 'uuid-1')])
+      it 'applies query and retrieval filters to actual local rows and records the query reader' do
+        embedding = ApolloSpecEmbedding.result
+        base = {
+          content: 'eligible', content_type: 'fact', source_agent: 'writer', tags: '["vault","ruby"]',
+          knowledge_domain: 'security', status: 'candidate', access_scope: 'private', identity_principal_id: 41,
+          confidence: 0.8, embedding: Legion::JSON.dump(embedding[:vector]),
+          embedding_space_id: embedding[:embedding_provenance][:space_id], embedding_dimensions: 2,
+          embedding_provenance: Legion::JSON.dump(embedding[:embedding_provenance])
+        }
+        eligible = db[:apollo_entries].insert(base)
+        [{ identity_principal_id: 42 }, { knowledge_domain: 'other' }, { source_agent: 'other' },
+         { tags: '["vault"]' }, { status: 'confirmed' }, { confidence: 0.1 }].each do |excluded|
+          db[:apollo_entries].insert(base.merge(excluded))
+        end
+        filters = { status: ['candidate'], domain: 'security', requesting_principal_id: 41,
+                    tags: %w[vault ruby], tag_match: :all, exclude_source_agents: ['other'], min_confidence: 0.7 }
+        query = described_class.query(text: 'test query', agent_id: 'reader', **filters)
+        retrieval = described_class.retrieve(text: 'test query', **filters)
+
+        expect(query).to include(success: true)
+        expect(retrieval).to include(success: true)
+        expect(query[:entries].map { |entry| entry[:id] }).to eq([eligible])
+        expect(retrieval[:entries].map { |entry| entry[:id] }).to eq([eligible])
+        expect(db[:apollo_access_log].select(:entry_id, :agent_id, :action).all).to eq(
+          [{ entry_id: eligible, agent_id: 'reader', action: 'query' }]
+        )
       end
     end
 
@@ -149,30 +182,6 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Request do
   end
 
   describe '.retrieve' do
-    context 'when local service is available' do
-      let(:mock_entry_class) { double('ApolloEntry') }
-      let(:mock_db) { double('db') }
-
-      before do
-        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
-        allow(Legion::LLM::Call::Embeddings).to receive(:generate)
-          .and_return({ vector: Array.new(1024, 0.1), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
-        allow(mock_entry_class).to receive(:db).and_return(mock_db)
-        allow(mock_db).to receive(:fetch).and_return(double(all: []))
-        allow(mock_entry_class).to receive(:where).and_return(double(update: true))
-      end
-
-      it 'applies retrieval filters and caller identity to the local database query' do
-        expect(mock_db).to receive(:fetch).with(
-          anything, hash_including(domain: 'security', requesting_principal_id: 41, tag_match: :all, exclude_source_agents: ['other'])
-        ).and_return(double(all: []))
-
-        result = described_class.retrieve(text: 'test query', domain: 'security', requesting_principal_id: 41,
-                                          tag_match: :all, exclude_source_agents: ['other'])
-        expect(result).to include(success: true, entries: [])
-      end
-    end
-
     context 'when neither path is available' do
       before do
         hide_const('Legion::Data::Model::ApolloEntry') if defined?(Legion::Data::Model::ApolloEntry)

@@ -9,7 +9,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::QueryResponse do
   let(:reply_queue) { double('reply queue', name: 'apollo-reply') }
   let(:replies) { [] }
   let(:dataset) { double('entries') }
-  let(:database) { double('database') }
+  let(:database) { double('database', database_type: :postgres) }
   let(:entry_model) { double('ApolloEntry', db: database) }
   let(:entry) do
     { id: 'entry-1', content: 'A shared fact', content_type: 'fact', confidence: 0.8,
@@ -17,6 +17,8 @@ RSpec.describe Legion::Extensions::Apollo::Runners::QueryResponse do
   end
 
   before do
+    hide_const('Legion::Data::Model::Apollo') if defined?(Legion::Data::Model::Apollo)
+    hide_const('Legion::Identity::Process') if defined?(Legion::Identity::Process)
     stub_const('Legion::Data::Model::ApolloEntry', entry_model)
     allow(entry_model).to receive(:exclude).and_return(dataset)
     allow(dataset).to receive_messages(where: dataset, order: dataset, limit: dataset, all: [entry])
@@ -71,10 +73,58 @@ RSpec.describe Legion::Extensions::Apollo::Runners::QueryResponse do
     expect(replies.first[:result]).to include(success: false, error: 'invalid_request')
   end
 
-  it 'publishes a structured error for malformed traversal input' do
-    described_class.handle_request(action: 'traverse', entry_id: [], reply_to: reply_queue.name)
+  it 'rejects nonpositive and malformed traversal identities rather than executing a graph lookup' do
+    expect(database).not_to receive(:fetch)
 
-    expect(replies.first[:result]).to include(success: false, error: 'invalid_request')
+    [0, -1, nil, '', [], {}, 1.5, true].each do |entry_id|
+      result = described_class.handle_request(action: 'traverse', entry_id: entry_id, reply_to: reply_queue.name)
+
+      expect(result).to include(success: false, error: :invalid_request)
+      expect(replies.last[:result]).to include(success: false, error: 'invalid_request')
+    end
+  end
+
+  context 'with native SQLite entry identities' do
+    let(:sqlite_database) { Sequel.sqlite }
+
+    before do
+      sqlite_database.create_table(:apollo_entries) do
+        primary_key :id
+        String :content
+        String :content_type
+        Float :confidence
+        String :tags
+        String :source_agent
+        String :status
+        String :access_scope
+      end
+      sqlite_database.create_table(:apollo_relations) do
+        primary_key :id
+        Integer :from_entry_id
+        Integer :to_entry_id
+        String :relation_type
+        Float :weight
+      end
+      sqlite_database[:apollo_entries].insert(id: 1, content: 'SQLite root', content_type: 'fact',
+                                              confidence: 0.8, tags: '[]', source_agent: 'worker',
+                                              status: 'confirmed', access_scope: 'global')
+      allow(entry_model).to receive(:db).and_return(sqlite_database)
+    end
+
+    after { sqlite_database.disconnect }
+
+    it 'traverses a positive integer and preserves its native type in the reply' do
+      result = described_class.handle_request(action: 'traverse', entry_id: 1, reply_to: reply_queue.name)
+
+      expect(result).to include(success: true, entries: [include(id: 1, content: 'SQLite root', depth: 0, activation: 1.0)])
+      expect(replies.first[:result]).to include(success: true, entries: [include(id: 1)])
+    end
+
+    it 'returns an empty successful graph for a valid identity that is not present' do
+      described_class.handle_request(action: 'traverse', entry_id: 2, reply_to: reply_queue.name)
+
+      expect(replies.first[:result]).to eq(success: true, entries: [], count: 0)
+    end
   end
 
   it 'raises when the broker cannot route the reply instead of acknowledging success' do

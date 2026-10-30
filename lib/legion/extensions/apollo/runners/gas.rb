@@ -33,7 +33,7 @@ module Legion
           def similar_entries_limit   = Legion::Extensions::Apollo.settings[:gas][:similar_entries_limit]
           def fallback_confidence     = Legion::Extensions::Apollo.settings[:gas][:fallback_confidence]
 
-          def process(audit_event)
+          def process(**audit_event)
             unless processable?(audit_event)
               log.debug('GAS process skipped reason=no_content')
               return { phases_completed: 0, reason: 'no content' }
@@ -43,9 +43,9 @@ module Legion
 
             facts = phase_comprehend(audit_event)
             entities = phase_extract(audit_event, facts)
-            relations = phase_relate(facts, entities)
+            relations = phase_relate(facts: facts)
             synthesis = phase_synthesize(facts, relations)
-            deposit_result = phase_deposit(facts, entities, relations, synthesis, audit_event)
+            deposit_result = phase_deposit(facts: facts, relations: relations, synthesis: synthesis, audit_event: audit_event)
             anticipations = phase_anticipate(facts, synthesis)
 
             result = {
@@ -97,13 +97,13 @@ module Legion
           end
 
           # Phase 3: Relate - classify relationships between new and existing entries
-          def phase_relate(facts, _entities)
+          def phase_relate(facts:, **)
             unless defined?(Runners::Knowledge)
               log.debug('GAS phase_relate skipped reason=knowledge_runner_unavailable')
               return []
             end
 
-            existing = fetch_similar_entries(facts)
+            existing = fetch_similar_entries(facts: facts)
             if existing.empty?
               log.debug("GAS phase_relate skipped reason=no_existing_entries facts=#{facts.size}")
               return []
@@ -140,13 +140,14 @@ module Legion
           end
 
           # Phase 5: Deposit entries, then link successfully stored facts.
-          def phase_deposit(facts, _entities, relations, synthesis, audit_event)
+          def phase_deposit(facts:, relations:, synthesis:, audit_event:, **)
             counts = { deposited: 0, failed: 0, facts: 0, synthesis: 0 }
             unless defined?(Legion::Extensions::Apollo::Runners::Knowledge)
               return counts.merge(failed: facts.size + synthesis.size, relations: 0,
                                   relations_failed: relations.size, relations_skipped: 0)
             end
 
+            knowledge = Object.new.extend(Legion::Extensions::Apollo::Runners::Knowledge)
             fact_ids = Array.new(facts.size)
             source_ids = {}
             { facts: facts, synthesis: synthesis }.each do |kind, entries|
@@ -158,7 +159,7 @@ module Legion
                     fact_ids[source_index] if source_index.is_a?(Integer) && source_index.between?(0, facts.size - 1)
                   end.uniq
                 end
-                result = Legion::Extensions::Apollo::Runners::Knowledge.handle_ingest(
+                result = knowledge.handle_ingest(
                   content: item[:content], content_type: item[:content_type].to_s,
                   tags: %w[gas auto_extracted], source_agent: 'gas_pipeline',
                   source_provider: audit_event.dig(:routing, :provider),
@@ -254,12 +255,13 @@ module Legion
             []
           end
 
-          def fetch_similar_entries(facts)
+          def fetch_similar_entries(facts:, **)
             lim = similar_entries_limit
             min_conf = Helpers::GraphQuery.default_query_min_confidence
             entries = []
+            knowledge = Object.new.extend(Legion::Extensions::Apollo::Runners::Knowledge)
             facts.each do |fact|
-              result = Runners::Knowledge.retrieve_relevant(query: fact[:content], limit: lim, min_confidence: min_conf)
+              result = knowledge.retrieve_relevant(query: fact[:content], limit: lim, min_confidence: min_conf)
               entries.concat(result[:entries]) if result[:success] && result[:entries]&.any?
             rescue StandardError => e
               handle_exception(e, level: :warn, operation: 'apollo.gas.fetch_similar_entries')

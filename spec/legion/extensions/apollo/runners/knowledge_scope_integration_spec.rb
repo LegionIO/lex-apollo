@@ -26,6 +26,10 @@ RSpec.describe 'Apollo knowledge access boundaries' do
         String :source_agent
         String :knowledge_domain
         String :source_context
+        String :embedding
+        String :embedding_space_id
+        Integer :embedding_dimensions
+        String :embedding_provenance
         DateTime :created_at
         DateTime :updated_at
       end
@@ -53,6 +57,10 @@ RSpec.describe 'Apollo knowledge access boundaries' do
         { id: 8, content: 'weak evidence', access_scope: 'global', confidence: 0.2 },
         { id: 9, content: 'excluded producer', access_scope: 'global', source_agent: 'blocked-agent' }
       ]
+      embedding = ApolloSpecEmbedding.result
+      base.merge!(embedding: ::JSON.generate(embedding[:vector]), embedding_dimensions: embedding[:dimensions],
+                  embedding_space_id: embedding[:embedding_provenance][:space_id],
+                  embedding_provenance: ::JSON.generate(embedding[:embedding_provenance]))
       rows.each { |row| db[:apollo_entries].insert(base.merge(row)) }
       db[:identities].insert(id: 7, principal_id: 42)
       [{ principal_id: 42, group_id: 5 }, { principal_id: 77, group_id: 5 }, { principal_id: 88, group_id: 6 }].each do |row|

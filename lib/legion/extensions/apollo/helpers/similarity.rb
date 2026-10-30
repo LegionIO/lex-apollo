@@ -13,23 +13,31 @@ module Legion
           module_function
 
           def cosine_similarity(vec_a:, vec_b:, **)
-            vec_a = parse_vector(vec_a)
-            vec_b = parse_vector(vec_b)
-            return 0.0 unless vec_a.is_a?(Array) && vec_b.is_a?(Array)
+            vec_a = parse_vector(vector: vec_a)
+            vec_b = parse_vector(vector: vec_b)
+            return 0.0 unless vec_a && vec_b && vec_a.length == vec_b.length
 
-            dot = vec_a.zip(vec_b).sum { |x, y| x * y }
-            mag_a = Math.sqrt(vec_a.sum { |x| x**2 })
-            mag_b = Math.sqrt(vec_b.sum { |x| x**2 })
-            return 0.0 if mag_a.zero? || mag_b.zero?
+            scale_a = vec_a.max_by(&:abs).abs
+            scale_b = vec_b.max_by(&:abs).abs
+            return 0.0 if scale_a.zero? || scale_b.zero?
 
-            dot / (mag_a * mag_b)
+            dot = mag_a = mag_b = 0.0
+            vec_a.each_index do |index|
+              a = vec_a[index].fdiv(scale_a)
+              b = vec_b[index].fdiv(scale_b)
+              dot += a * b
+              mag_a += a * a
+              mag_b += b * b
+            end
+            (dot / Math.sqrt(mag_a * mag_b)).clamp(-1.0, 1.0)
           end
 
-          def parse_vector(vec)
-            return vec if vec.is_a?(Array)
-            return nil unless vec.is_a?(String)
+          def parse_vector(vector:, **)
+            vector = json_parse(vector) if vector.is_a?(String)
+            return nil unless vector.is_a?(Array) && !vector.empty?
+            return nil unless vector.all? { |value| value.is_a?(Numeric) && value.real? && value.finite? }
 
-            json_parse(vec)
+            vector
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'apollo.similarity.parse_vector')
             nil

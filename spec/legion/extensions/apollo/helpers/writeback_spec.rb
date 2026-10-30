@@ -21,11 +21,11 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Writeback do
   describe '.should_capture?' do
     it 'returns false for short responses' do
       short = double('Response', message: { content: 'yes' }, tool_calls: [])
-      expect(described_class.should_capture?(base_request, short, {})).to be false
+      expect(described_class.should_capture?(response: short, enrichments: {})).to be false
     end
 
     it 'returns false when no research tools were used' do
-      expect(described_class.should_capture?(base_request, base_response, {})).to be false
+      expect(described_class.should_capture?(response: base_response, enrichments: {})).to be false
     end
 
     it 'returns true when research tools were used' do
@@ -34,7 +34,7 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Writeback do
                              message:    { content: 'x' * 100 },
                              model:      'claude-sonnet-4-6',
                              tool_calls: [{ name: 'read_file' }])
-      expect(described_class.should_capture?(base_request, long_response, enrichments)).to be true
+      expect(described_class.should_capture?(response: long_response, enrichments: enrichments)).to be true
     end
 
     it 'returns false for echo chamber (apollo had results, no additional research)' do
@@ -43,7 +43,7 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Writeback do
         'tool_calls'                 => []
       }
       long_response = double('Response', message: { content: 'x' * 100 }, tool_calls: [])
-      expect(described_class.should_capture?(base_request, long_response, enrichments)).to be false
+      expect(described_class.should_capture?(response: long_response, enrichments: enrichments)).to be false
     end
 
     it 'recognizes canonical research tools represented by typed objects or either hash key style' do
@@ -53,7 +53,7 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Writeback do
                tool_type.new(name: 'search_content'), tool_type.new(name: 'run_command')]
       decisions = tools.map do |tool|
         response = response_type.new(message: { content: 'Independent research findings. ' * 4 }, tools: [tool])
-        described_class.should_capture?(base_request, response, {})
+        described_class.should_capture?(response: response, enrichments: {})
       end
 
       expect(decisions).to all(be true)
@@ -65,13 +65,15 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Writeback do
         tools:   [Data.define(:name).new(name: 'apollo_query')]
       )
 
-      expect(described_class.should_capture?(base_request, response, { 'rag_context:apollo_results' => { count: 3 } })).to be false
+      expect(described_class.should_capture?(response:    response,
+                                             enrichments: { 'rag_context:apollo_results' => { count: 3 } })).to be false
     end
 
     it 'retains research evidence supplied through enrichments when the final response has no tools' do
       response = Data.define(:message, :tools).new(message: { content: 'Completed research findings. ' * 4 }, tools: [])
 
-      expect(described_class.should_capture?(base_request, response, { 'tool_calls' => [{ 'name' => 'read_file' }] })).to be true
+      expect(described_class.should_capture?(response:    response,
+                                             enrichments: { 'tool_calls' => [{ 'name' => 'read_file' }] })).to be true
     end
   end
 
@@ -108,78 +110,66 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Writeback do
     end
   end
 
-  describe '.write_directly' do
-    let(:payload) do
-      {
-        content:      'test content for ingest',
-        tags:         %w[test ruby],
-        content_type: 'observation',
-        embedding:    Array.new(1024, 0.1)
-      }
+  describe '.evaluate_and_route' do
+    let(:response) { double('Response', message: { content: 'research findings ' * 10 }, model: 'producer-model', tool_calls: [{ name: 'read_file' }]) }
+    let(:provenance) do
+      { space_id: 'a' * 64, provider: 'embed-provider', model: 'embed-model', instance: 'local', model_revision: nil,
+        identity_source: 'instance', dimensions: 2, task: 'document', prefixes: { document: '', query: '' }, normalization: 'none' }
     end
 
-    context 'when Legion::Apollo is defined' do
-      before do
-        stub_const('Legion::Apollo', Module.new)
-        allow(Legion::Apollo).to receive(:ingest)
-      end
-
-      it 'routes through Legion::Apollo.ingest' do
-        described_class.write_directly(payload)
-        expect(Legion::Apollo).to have_received(:ingest).with(**payload)
-      end
-
-      it 'does not call Runners::Knowledge.handle_ingest directly' do
-        knowledge_mod = Module.new { def self.handle_ingest(**); end }
-        stub_const('Legion::Extensions::Apollo::Runners', Module.new)
-        stub_const('Legion::Extensions::Apollo::Runners::Knowledge', knowledge_mod)
-        allow(knowledge_mod).to receive(:handle_ingest)
-        described_class.write_directly(payload)
-        expect(knowledge_mod).not_to have_received(:handle_ingest)
-      end
+    before do
+      stub_const('Legion::LLM::Call::Embeddings', Module.new)
+      allow(Legion::LLM::Call::Embeddings).to receive(:generate).and_return(
+        vector: [0.6, 0.8], provider: 'embed-provider', model: 'embed-model', instance: 'local', dimensions: 2, embedding_provenance: provenance
+      )
+      allow(Legion::Extensions::Apollo::Helpers::Capability).to receive(:can_embed?).and_return(true)
+      allow(Legion::Extensions::Apollo::Helpers::Capability).to receive(:can_write?).and_return(true)
     end
 
-    context 'when Legion::Apollo is not defined' do
-      let(:knowledge_mod) { Module.new { def self.handle_ingest(**); end } }
-
-      before do
-        hide_const('Legion::Apollo') if defined?(Legion::Apollo)
-        stub_const('Legion::Extensions::Apollo::Runners', Module.new)
-        stub_const('Legion::Extensions::Apollo::Runners::Knowledge', knowledge_mod)
-        allow(knowledge_mod).to receive(:handle_ingest)
+    it 'passes real generated vectors and original context to ingestion' do
+      received = []
+      knowledge = Module.new do
+        define_method(:handle_ingest) do |**input|
+          received << input
+          { success: true }
+        end
       end
+      stub_const('Legion::Extensions::Apollo::Runners::Knowledge', knowledge)
+      allow(base_request).to receive(:metadata).and_return(context: { request_id: 'research' }, identity_principal_id: 21, access_scope: 'private')
 
-      it 'falls back to Runners::Knowledge.handle_ingest' do
-        described_class.write_directly(payload)
-        expect(knowledge_mod).to have_received(:handle_ingest).with(**payload)
-      end
+      expect(described_class.evaluate_and_route(request: base_request, response: response)[:success]).to be true
+      expect(received.first).to include(embedding: [0.6, 0.8], embedding_provenance: provenance, source_model: 'producer-model',
+                                        context: { request_id: 'research' }, identity_principal_id: 21, access_scope: 'private')
     end
 
-    context 'when an error is raised' do
-      before do
-        stub_const('Legion::Apollo', Module.new)
-        allow(Legion::Apollo).to receive(:ingest).and_raise(StandardError, 'boom')
-        allow(described_class).to receive(:publish_to_transport)
+    it 'propagates rejected ingestion instead of silently switching to an unchecked broker path' do
+      knowledge = Module.new do
+        def handle_ingest(**)
+          { success: false, error: :rejected }
+        end
       end
+      stub_const('Legion::Extensions::Apollo::Runners::Knowledge', knowledge)
+      expect { described_class.evaluate_and_route(request: base_request, response: response) }.to raise_error(IOError)
+    end
 
-      it 'falls back to publish_to_transport' do
-        described_class.write_directly(payload)
-        expect(described_class).to have_received(:publish_to_transport)
-          .with(payload, has_embedding: true)
-      end
+    it 'propagates embedding errors rather than capturing fabricated vectors' do
+      allow(Legion::LLM::Call::Embeddings).to receive(:generate).and_return(vector: nil)
+      expect { described_class.evaluate_and_route(request: base_request, response: response) }
+        .to raise_error(Legion::Extensions::Apollo::Helpers::Embedding::Error)
+    end
+
+    it 'requires accepted publication when this node cannot generate embeddings' do
+      allow(Legion::Extensions::Apollo::Helpers::Capability).to receive(:can_embed?).and_return(false)
+      message = instance_double(Legion::Extensions::Apollo::Transport::Messages::Writeback, publish: { accepted: false })
+      allow(Legion::Extensions::Apollo::Transport::Messages::Writeback).to receive(:new).and_return(message)
+      expect { described_class.evaluate_and_route(request: base_request, response: response) }.to raise_error(IOError)
     end
   end
 
   describe '.content_hash' do
-    it 'produces consistent hashes for same content' do
-      hash1 = described_class.content_hash('hello world')
-      hash2 = described_class.content_hash('hello world')
-      expect(hash1).to eq(hash2)
-    end
-
     it 'normalizes whitespace before hashing' do
-      hash1 = described_class.content_hash('hello  world')
-      hash2 = described_class.content_hash('hello world')
+      hash1 = described_class.content_hash(content: 'hello  world')
+      hash2 = described_class.content_hash(content: 'hello world')
       expect(hash1).to eq(hash2)
     end
   end

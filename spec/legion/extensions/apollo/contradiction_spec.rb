@@ -5,59 +5,99 @@ require 'spec_helper'
 RSpec.describe 'Apollo Contradiction Detection' do
   let(:knowledge) { Object.new.extend(Legion::Extensions::Apollo::Runners::Knowledge) }
 
-  describe '#llm_detects_conflict?' do
-    it 'returns false when LLM unavailable' do
-      expect(knowledge.send(:llm_detects_conflict?, 'sky is blue', 'sky is red')).to be false
-    end
-
-    context 'when LLM is available' do
-      let(:llm_mod) do
-        Module.new do
-          def self.respond_to?(*) = true
-          def self.structured(**) = { data: { contradicts: true } }
-        end
-      end
-
-      before { stub_const('Legion::LLM', llm_mod) }
-
-      it 'truncates content longer than CONFLICT_CHECK_MAX_CHARS' do
-        long_text = 'x' * 10_000
-        allow(llm_mod).to receive(:structured).and_return({ data: { contradicts: false } })
-        knowledge.send(:llm_detects_conflict?, long_text, long_text)
-        expect(llm_mod).to have_received(:structured) do |**kwargs|
-          user_msg = kwargs[:messages].find { |m| m[:role] == 'user' }[:content]
-          expect(user_msg.length).to be < 10_000
-        end
-      end
-    end
+  it 'does not assert a contradiction when the LLM is unavailable' do
+    hide_const('Legion::LLM')
+    expect(knowledge.send(:llm_detects_conflict?, content_a: 'sky is blue', content_b: 'sky is red')).to be false
   end
 
-  describe '#detect_contradictions' do
-    it 'returns empty when ApolloEntry model unavailable' do
-      expect(knowledge.send(:detect_contradictions, 1, nil, 'test')).to eq([])
+  it 'bounds both statements before sending them to the conflict model' do
+    llm = Module.new
+    stub_const('Legion::LLM', llm)
+    received = nil
+    allow(llm).to receive(:structured) do |messages:, **|
+      received = messages.last[:content]
+      { data: { contradicts: false } }
     end
 
-    it 'returns empty when embedding is nil' do
-      expect(knowledge.send(:detect_contradictions, 'uuid-1', nil, 'test')).to eq([])
+    expect(knowledge.send(:llm_detects_conflict?, content_a: 'a' * 10_000, content_b: 'b' * 10_000)).to be false
+    expect(received).to eq("A: #{'a' * 4000}\n\nB: #{'b' * 4000}")
+  end
+
+  context 'with persisted embeddings' do
+    let(:db) { Sequel.sqlite }
+
+    before do
+      db.create_table(:apollo_entries) do
+        primary_key :id
+        String :content
+        String :content_type, default: 'fact'
+        Float :confidence, default: 0.8
+        String :tags, default: '[]'
+        String :source_agent, default: 'test'
+        Integer :access_count, default: 0
+        DateTime :created_at
+        String :knowledge_domain, default: 'general'
+        String :access_scope, default: 'private'
+        Integer :identity_principal_id
+        String :status, default: 'confirmed'
+        String :embedding
+        String :embedding_space_id
+        Integer :embedding_dimensions
+        String :embedding_provenance
+      end
+      db.create_table(:apollo_relations) do
+        primary_key :id
+        Integer :from_entry_id
+        Integer :to_entry_id
+        String :relation_type
+        String :source_agent
+        Float :weight
+      end
+      stub_const('Legion::Data::Model::Apollo::Entry', Class.new(Sequel::Model(db[:apollo_entries])))
+      stub_const('Legion::Data::Model::Apollo::Relation', Class.new(Sequel::Model(db[:apollo_relations])))
+      llm = Module.new do
+        def self.structured(**)
+          { data: { contradicts: true } }
+        end
+      end
+      stub_const('Legion::LLM', llm)
     end
 
-    context 'when entries exist' do
-      let(:mock_entry_class) { double('ApolloEntry') }
-      let(:mock_relation_class) { double('ApolloRelation') }
-      let(:mock_db) { double('db') }
-      let(:embedding) { Array.new(1536, 0.1) }
+    after { db.disconnect }
 
-      before do
-        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
-        stub_const('Legion::Data::Model::ApolloRelation', mock_relation_class)
-        allow(mock_entry_class).to receive(:db).and_return(mock_db)
-      end
+    def insert_entry(content:, owner: 41, model: 'test', provenance: nil, **)
+      result = ApolloSpecEmbedding.result(model: model)
+      provenance ||= result[:embedding_provenance]
+      db[:apollo_entries].insert(
+        content: content, identity_principal_id: owner, embedding: Legion::JSON.dump(result[:vector]),
+        embedding_space_id: provenance[:space_id], embedding_dimensions: provenance[:dimensions],
+        embedding_provenance: Legion::JSON.dump(provenance)
+      )
+    end
 
-      it 'returns empty when no similar entries found' do
-        allow(mock_db).to receive(:fetch).and_return(double(all: []))
-        result = knowledge.send(:detect_contradictions, 'uuid-1', embedding, 'test')
-        expect(result).to eq([])
-      end
+    it 'disputes only compatible same-owner records using the current persisted vector' do
+      source = insert_entry(content: 'Source statement')
+      match = insert_entry(content: 'Conflicting statement')
+      other_owner = insert_entry(content: 'Other owner statement', owner: 42)
+      other_model = insert_entry(content: 'Other model statement', model: 'other')
+      stale_provenance = ApolloSpecEmbedding.result[:embedding_provenance].merge(model: 'changed-without-space-update')
+      inconsistent = insert_entry(content: 'Inconsistent provenance', provenance: stale_provenance)
+      legacy = db[:apollo_entries].insert(content: 'Legacy statement', identity_principal_id: 41, embedding: '[1.0,0.0]')
+
+      expect(knowledge.send(:detect_contradictions, entry_id: source)).to eq([match])
+      expect(db[:apollo_entries].where(status: 'disputed').select_map(:id)).to contain_exactly(source, match)
+      expect(db[:apollo_entries].where(id: [other_owner, other_model, inconsistent, legacy]).select_map(:status)).to all(eq('confirmed'))
+      expect(db[:apollo_relations].select(:from_entry_id, :to_entry_id, :relation_type).all).to eq(
+        [{ from_entry_id: source, to_entry_id: match, relation_type: 'contradicts' }]
+      )
+    end
+
+    it 'leaves legacy rows without provenance undisputed instead of guessing their embedding model' do
+      source = db[:apollo_entries].insert(content: 'Unknown model', identity_principal_id: 41, embedding: '[1.0,0.0]')
+      insert_entry(content: 'Known model')
+
+      expect(knowledge.send(:detect_contradictions, entry_id: source)).to eq([])
+      expect(db[:apollo_entries].where(status: 'disputed').count).to eq(0)
     end
   end
 end

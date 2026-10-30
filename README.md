@@ -1,15 +1,15 @@
 # lex-apollo
 
-Shared durable knowledge store for the GAIA cognitive mesh. Agents publish confirmed knowledge via RabbitMQ; a dedicated Apollo service persists to PostgreSQL+pgvector. Supports semantic search, concept graph traversal, and expertise tracking.
+Shared durable knowledge store for the GAIA cognitive mesh. Agents publish confirmed knowledge via RabbitMQ; a dedicated Apollo service persists to PostgreSQL+pgvector or SQLite. Supports semantic search, concept graph traversal, and expertise tracking.
 
 ## Overview
 
 `lex-apollo` operates in two modes:
 
 - **Client mode**: Any agent loads this gem and calls runners. Runners publish to RabbitMQ — no direct database access required.
-- **Service mode**: A dedicated Apollo process runs the actors, subscribes to queues, generates embeddings, and writes to PostgreSQL+pgvector.
+- **Service mode**: A dedicated Apollo process runs the actors, subscribes to queues, generates embeddings, and writes to PostgreSQL+pgvector or SQLite.
 
-The backing store is Azure Database for PostgreSQL Flexible Server with the pgvector extension.
+PostgreSQL uses native vector distance; SQLite stores JSON vectors and computes exact similarity over eligible rows, keeping bounded top-k results without limiting the candidate set before ranking. Both backends enforce the same ownership, filter, provenance, and traversal boundaries.
 
 ## Installation
 
@@ -112,9 +112,33 @@ HTTP reads and deprecation derive the database principal from authenticated `leg
 
 Broker producers are trusted to supply database principal IDs. Missing or null request principals mean global-only visibility, and missing ingestion ownership stays null rather than becoming the receiving service's identity. Producer scope, identity, provenance, context, and supplied embeddings survive ingestion and writeback-store decoding. Direct internal Knowledge calls retain their existing nil-principal/process-identity semantics.
 
-Traversal checks the seed and every hop: inaccessible and archived nodes cannot bridge into visible results. Mesh export includes only global confirmed entries. Content-hash reuse requires matching scope and, for private/team entries, owner; the current database-wide uniqueness constraint can still reject equal content across different owners rather than create separate rows.
+Traversal checks the seed and every hop: inaccessible and archived nodes cannot bridge into visible results. Mesh export includes only global confirmed entries. Migration 137 scopes active content-hash uniqueness to access scope and private/team owner; identical content may belong to different owners without rewriting its hash. Global entries share one global hash boundary. Archived copies are excluded from uniqueness.
 
-Coordinated client wire migration, synchronous retrieval deadlines/fan-out, SQLite/vector schema support, and embedding model/dimension provenance remain separate cross-repository work. This release does not repair the existing writeback-vectorizer dispatch path.
+### Embedding Compatibility and Migration
+
+Deploy `legion-data >= 1.10.18` and `legion-llm >= 0.16.10`, then apply data migration 137 before starting this service version. Existing active/archive content, hashes, IDs, owners, and vectors are preserved. SQLite gains JSON-text vectors/provenance; PostgreSQL vectors become unconstrained in dimension. Legacy model provenance is deliberately left unknown, not inferred from the old column size. The migration is irreversible because restoring global uniqueness or one fixed dimension could destroy valid data.
+
+Every usable vector carries `embedding_provenance`: routed provider/model, authoritative revision (or exact instance when no revision is known), actual dimensions, document/query prefix pair, normalization, task, and stable `space_id`. Search uses query vectors; stored vectors must be document vectors. Only compatible profiles participate in similarity, corroboration, or contradiction checks, even when two unrelated models return the same dimension. Invalid, zero, or unknown-profile vectors cannot silently enter comparisons.
+
+`legion-llm` owns embedding routing; Apollo has no independent default model/provider. Supplied document vectors are reused only with valid provenance. Unknown legacy/precomputed vectors regenerate through the real router before successful ingestion. Source model/provider metadata remains separate from embedding provenance.
+
+Backfill legacy rows in bounded batches:
+
+```ruby
+maintenance = Object.new.extend(Legion::Extensions::Apollo::Runners::Maintenance)
+result = maintenance.reembed_entries(limit: 100, after_id: nil)
+# Continue from result[:next_after_id]; inspect result[:failures] for retries.
+```
+
+The default selects active rows with unknown space IDs. To migrate a known space after a model, dimension, prefix, or revision change, pass `legacy_only: false, from_space_id: old_space_id` and optionally constrain the target with `provider:`, `model:`, `instance:`, and `dimensions:`. Each batch generates real embeddings and updates only vector/provenance fields; concurrent content changes are skipped. IDs, content, hashes, ownership, status, and timestamps remain unchanged. Queries in the new space exclude incompatible old rows until migration reaches them.
+
+PostgreSQL migration removes incompatible direct-column ANN indexes but preserves dimension-constrained expression indexes and unrelated indexes. Native exact search remains available; large installations should plan compatible per-space/dimension indexes separately.
+
+### Writeback Delivery
+
+`WritebackVectorize` dispatches to the callable Writeback runner. Generation errors, explicit ingest failures, and failed broker publications raise into subscription retry handling. Forwarding strips the inbound exchange/routing key so generated vectors reach `legion.apollo.writeback.store`, not the vectorizer again. Producer ownership (including explicit null), context, source metadata, and embedding provenance survive delivery. Mandatory routing and bounded publisher confirms establish broker acceptance, not synchronous remote persistence.
+
+Core-client legacy wire migration and synchronous retrieval deadlines/fan-out remain outside this server release.
 
 ### Service Mode
 
@@ -122,12 +146,14 @@ Service actors include:
 
 | Actor | Type | Interval | Purpose |
 |---|---|---|---|
-| `Ingest` | Subscription | on-message | Receive knowledge, generate embeddings, persist to PostgreSQL |
+| `Ingest` | Subscription | on-message | Receive knowledge, generate embeddings, persist to the configured backend |
 | `QueryResponder` | Subscription | on-message | Handle semantic queries, return results via RPC |
 | `Decay` | Interval | 3600s | Confidence decay cycle across all entries |
 | `ExpertiseAggregator` | Interval | 1800s | Recalculate domain proficiency scores |
 | `CorroborationChecker` | Interval | 900s | Scan pending entries for auto-confirm threshold |
 | `GasSubscriber` | Subscription | on-message | Process `llm.audit.complete` events and persist accepted GAS outputs |
+| `WritebackVectorize` | Subscription | on-message | Generate compatible document vectors and ingest or forward with retryable failures |
+| `WritebackStore` | Subscription | on-message | Persist producer-owned writeback payloads |
 
 ### Atomic Ingestion
 
@@ -175,9 +201,10 @@ See `helpers/confidence.rb` for all constants and math helpers.
 - RabbitMQ (via `legion-transport >= 1.4.23`)
 
 ### Service mode
-- PostgreSQL with pgvector extension
+- PostgreSQL with pgvector (including `vector_norm`) or SQLite with JSON and window-function support
 - RabbitMQ
-- `legion-data` for database connection management
+- `legion-data >= 1.10.18`, with migration 137 applied
+- `legion-llm >= 0.16.10`, with an available routed embedding provider
 
 ## Development
 

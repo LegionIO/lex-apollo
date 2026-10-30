@@ -9,21 +9,19 @@ require 'legion/data/helper'
 require 'legion/json/helper'
 require 'legion/transport'
 
-# Sequel is a runtime dependency via legion-data; stub for specs
-unless defined?(Sequel)
-  module Sequel
-    class Error < StandardError; end
-    class UniqueConstraintViolation < Error; end
+require 'sequel'
+require 'sequel/extensions/pg_array'
+require 'digest'
 
-    def self.pg_array(arr) = arr
-    def self.lit(str, *) = str
-    def self.desc(sym) = sym
-    Expr = Struct.new(:value) do
-      def +(other) = "#{value} + #{other}"
-      def *(other) = "#{value} * #{other}"
-    end
-    def self.expr(sym) = Expr.new(sym)
-    def self.[](sym) = Expr.new(sym)
+module ApolloSpecEmbedding
+  def self.result(vector: [1.0, 0.0], task: :document, model: 'test', provider: 'test', instance: 'test', **)
+    provenance = {
+      space_id: Digest::SHA256.hexdigest([provider, model, instance, vector.length].join(':')),
+      provider: provider, model: model, instance: instance, model_revision: nil, identity_source: 'instance',
+      dimensions: vector.length, task: task.to_s, prefixes: { document: '', query: '' }, normalization: 'none'
+    }
+    { vector: vector, model: model, provider: provider, instance: instance,
+      dimensions: vector.length, tokens: 0, embedding_provenance: provenance }
   end
 end
 

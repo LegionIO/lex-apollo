@@ -16,12 +16,13 @@ module Legion
               'legion.apollo.ingest'
             end
 
-            def message
+            def message(**)
               { context: {} }.merge(
                 @options.slice(:content, :content_type, :tags, :source_agent, :source_provider,
                                :source_channel, :knowledge_domain, :submitted_by, :submitted_from,
                                :content_hash, :context, :access_scope, :identity_principal_id,
-                               :identity_id, :identity_canonical_name, :embedding, :reply_to, :correlation_id)
+                               :identity_id, :identity_canonical_name, :embedding, :embedding_provenance,
+                               :source_model, :model, :provider, :instance, :dimensions, :reply_to, :correlation_id)
               )
             end
 

@@ -10,9 +10,6 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Gas, '.phase_relate' do
       { content: 'cosine distance measures similarity', content_type: :concept }
     ]
   end
-  let(:entities) do
-    [{ name: 'pgvector', type: 'technology' }]
-  end
 
   context 'when Apollo Knowledge is unavailable' do
     before do
@@ -20,13 +17,13 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Gas, '.phase_relate' do
     end
 
     it 'returns empty array' do
-      result = described_class.phase_relate(facts, entities)
+      result = described_class.phase_relate(facts: facts)
       expect(result).to eq([])
     end
   end
 
   context 'when Apollo has similar entries' do
-    let(:knowledge_runner) { double('Knowledge') }
+    let(:knowledge_runner) { Module.new }
     let(:similar_entries) do
       {
         success: true,
@@ -39,18 +36,16 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Gas, '.phase_relate' do
 
     before do
       stub_const('Legion::Extensions::Apollo::Runners::Knowledge', knowledge_runner)
-      allow(knowledge_runner).to receive(:retrieve_relevant).and_return(similar_entries)
+      response = similar_entries
+      knowledge_runner.define_method(:retrieve_relevant) { |**| response }
     end
 
     context 'when GaiaCaller is unavailable' do
       it 'falls back to similar_to relations' do
-        result = described_class.phase_relate(facts, entities)
-        expect(result).to all(include(relation_type: 'similar_to'))
-      end
-
-      it 'returns relations for each fact-entry pair' do
-        result = described_class.phase_relate(facts, entities)
-        expect(result).not_to be_empty
+        result = described_class.phase_relate(facts: facts)
+        expect(result.map { |relation| [relation[:from_content], relation[:to_id], relation[:relation_type]] }).to eq(
+          facts.map { |fact| [fact[:content], 'e1', 'similar_to'] }
+        )
       end
     end
 
@@ -71,8 +66,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Gas, '.phase_relate' do
       end
 
       it 'classifies relations via LLM' do
-        result = described_class.phase_relate(facts, entities)
-        expect(result).not_to be_empty
+        result = described_class.phase_relate(facts: facts)
         expect(result.first[:relation_type]).to eq('depends_on')
       end
 
@@ -85,26 +79,25 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Gas, '.phase_relate' do
         )
         allow(gaia_caller).to receive(:structured).and_return(low_conf_response)
 
-        result = described_class.phase_relate(facts, entities)
+        result = described_class.phase_relate(facts: facts)
         # Low confidence relations should fall back to similar_to
         classified = result.select { |r| r[:relation_type] == 'contradicts' }
+        expect(result.map { |relation| relation[:relation_type] }).to eq(%w[similar_to similar_to])
         expect(classified).to be_empty
       end
     end
   end
 
   context 'when Apollo returns no similar entries' do
-    let(:knowledge_runner) { double('Knowledge') }
+    let(:knowledge_runner) { Module.new }
 
     before do
       stub_const('Legion::Extensions::Apollo::Runners::Knowledge', knowledge_runner)
-      allow(knowledge_runner).to receive(:retrieve_relevant).and_return(
-        { success: true, entries: [], count: 0 }
-      )
+      knowledge_runner.define_method(:retrieve_relevant) { |**| { success: true, entries: [], count: 0 } }
     end
 
     it 'returns empty array' do
-      result = described_class.phase_relate(facts, entities)
+      result = described_class.phase_relate(facts: facts)
       expect(result).to eq([])
     end
   end

@@ -33,6 +33,9 @@ RSpec.describe 'Apollo corroboration persistence' do
         String :source_provider
         String :source_channel
         String :embedding
+        String :embedding_space_id
+        Integer :embedding_dimensions
+        String :embedding_provenance
         Float :confidence
         String :source_context
         DateTime :confirmed_at
@@ -59,7 +62,14 @@ RSpec.describe 'Apollo corroboration persistence' do
       Legion::Data::Model::Apollo.const_set(:Entry, Class.new(Sequel::Model(db[:apollo_entries])))
       Legion::Data::Model::Apollo.const_set(:Relation, Class.new(Sequel::Model(db[:apollo_relations])))
       input = ::JSON.parse($stdin.read, symbolize_names: true)
-      input[:entries].each { |entry| db[:apollo_entries].insert(entry.merge(embedding: '[1.0,0.0]')) }
+      input[:entries].each do |entry|
+        embedding = ApolloSpecEmbedding.result(**entry.delete(:embedding_profile).to_h)
+        db[:apollo_entries].insert(entry.merge(
+          embedding: ::JSON.generate(embedding[:vector]), embedding_dimensions: embedding[:dimensions],
+          embedding_space_id: embedding[:embedding_provenance][:space_id],
+          embedding_provenance: ::JSON.generate(embedding[:embedding_provenance])
+        ))
+      end
       input[:memberships].each { |membership| db[:identity_group_memberships].insert(membership) }
       input[:identities].each { |identity| db[:identities].insert(identity) }
       runner = Object.new.extend(Legion::Extensions::Apollo::Runners::Maintenance)
@@ -70,7 +80,7 @@ RSpec.describe 'Apollo corroboration persistence' do
     RUBY
   end
 
-  def corroboration_state(entries:, memberships: [], identities: [], runs: 1)
+  def corroboration_state(entries:, memberships: [], identities: [], runs: 1, **)
     stdout, stderr, status = Open3.capture3(
       RbConfig.ruby, '-Ilib', '-Ispec', '-e', corroboration_script,
       chdir:      File.expand_path('../../../../..', __dir__),
@@ -187,5 +197,24 @@ RSpec.describe 'Apollo corroboration persistence' do
     expect(state[:result]).to include(success: true, promoted: 0)
     expect(state[:entries].map { |entry| entry[:status] }).to all(eq('candidate'))
     expect(state[:relations]).to eq([])
+  end
+
+  it 'does not promote identical coordinates across model spaces but accepts compatible independent evidence' do
+    incompatible = corroboration_state(entries: [
+                                         candidate,
+                                         confirmed.merge(embedding_profile: { model: 'different-model' })
+                                       ])
+    compatible = corroboration_state(entries: [
+                                       candidate,
+                                       confirmed.merge(embedding_profile: { model: 'different-model' }),
+                                       confirmed.merge(id: 3)
+                                     ])
+
+    expect(incompatible[:result]).to include(success: true, promoted: 0)
+    expect(incompatible[:entries].first).to include(status: 'candidate', confidence: 0.5)
+    expect(incompatible[:relations]).to eq([])
+    expect(compatible[:result]).to include(success: true, promoted: 1)
+    expect(compatible[:entries].first).to include(status: 'confirmed', confidence: 0.8)
+    expect(compatible[:relations]).to contain_exactly(hash_including(from_entry_id: 1, to_entry_id: 3))
   end
 end

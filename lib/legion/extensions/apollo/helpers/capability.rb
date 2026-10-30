@@ -45,13 +45,11 @@ module Legion
             false
           end
 
-          def check_db_write_privilege
+          def check_db_write_privilege(**)
             PRIVILEGE_MUTEX.synchronize do
               return @apollo_write_privilege unless @apollo_write_privilege.nil?
 
-              @apollo_write_privilege = Legion::Data.connection
-                                                    .fetch("SELECT has_table_privilege(current_user, 'apollo_entries', 'INSERT') AS can_insert")
-                                                    .first[:can_insert] == true
+              @apollo_write_privilege = Legion::Data.can_write?(:apollo_entries)
             end
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'apollo.capability.check_db_write_privilege')

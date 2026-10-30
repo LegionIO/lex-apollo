@@ -114,16 +114,29 @@ RSpec.describe Legion::Extensions::Apollo::Api do
         require 'spec_helper'
         require 'json'
         require 'legion/extensions/apollo/api'
+        module Legion
+          module LLM
+            module Call
+              module Embeddings
+                def self.generate(text:, task: :document, **)
+                  ApolloSpecEmbedding.result(task: task)
+                end
+              end
+            end
+          end
+        end
         db = Sequel.sqlite
         db.create_table(:apollo_entries) do
           primary_key :id
           %i[content content_type source_agent source_provider source_channel source_context tags status
-             knowledge_domain submitted_by submitted_from content_hash access_scope identity_canonical_name embedding].each do |column|
+             knowledge_domain submitted_by submitted_from content_hash access_scope identity_canonical_name embedding
+             embedding_space_id embedding_provenance].each do |column|
             String column
           end
           Float :confidence
           Integer :identity_principal_id
           Integer :identity_id
+          Integer :embedding_dimensions
           DateTime :created_at
           DateTime :updated_at
         end

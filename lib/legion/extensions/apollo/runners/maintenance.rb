@@ -5,6 +5,8 @@ require_relative '../helpers/confidence'
 require_relative '../helpers/data_models'
 require_relative '../helpers/similarity'
 require_relative '../helpers/graph_query'
+require_relative '../helpers/embedding'
+require_relative '../helpers/storage'
 
 module Legion
   module Extensions
@@ -87,6 +89,7 @@ module Legion
             end
 
             conn = Legion::Data.connection
+            return decay_sqlite_entries(db: conn, alpha: alpha, min_confidence: min_confidence, min_age_hours: min_age_hours) if conn.database_type == :sqlite
 
             age_days_expr = Sequel.lit(
               'GREATEST(EXTRACT(EPOCH FROM (NOW() - COALESCE(updated_at, created_at))) / 86400.0, 1.0)'
@@ -130,7 +133,7 @@ module Legion
             end
 
             entry_model = Helpers::DataModels.apollo_entry
-            candidates = entry_model.where(status: 'candidate').exclude(embedding: nil).order(:id).limit(100).all
+            candidates = entry_model.where(status: 'candidate').exclude(embedding: nil).exclude(embedding_space_id: nil).order(:id).limit(100).all
             confirmed_ids = entry_model.where(status: 'confirmed').select_map(:id)
             log.debug("Apollo Maintenance.check_corroboration candidates=#{candidates.size} confirmed=#{confirmed_ids.size}")
 
@@ -147,15 +150,17 @@ module Legion
                 confidence:   Helpers::Confidence.apply_corroboration_boost(confidence: candidate.confidence),
                 updated_at:   Time.now
               }
-              updates[:source_context] = bootstrap_confirmation_context(candidate) if bootstrap
-              candidate.update(updates)
-              Helpers::DataModels.apollo_relation.create(
-                from_entry_id: candidate.id,
-                to_entry_id:   match.id,
-                relation_type: 'similar_to',
-                source_agent:  'system:corroboration',
-                weight:        Legion::Extensions::Apollo.settings[:corroboration][:relation_weight]
-              )
+              updates[:source_context] = bootstrap_confirmation_context(entry: candidate) if bootstrap
+              entry_model.db.transaction do
+                candidate.update(updates)
+                Helpers::DataModels.apollo_relation.create(
+                  from_entry_id: candidate.id,
+                  to_entry_id:   match.id,
+                  relation_type: 'similar_to',
+                  source_agent:  'system:corroboration',
+                  weight:        Legion::Extensions::Apollo.settings[:corroboration][:relation_weight]
+                )
+              end
               promoted += 1
             end
 
@@ -166,17 +171,82 @@ module Legion
             { success: false, error: e.message }
           end
 
+          def reembed_entries(limit: 100, after_id: nil, from_space_id: nil, legacy_only: true, **routing)
+            return { success: false, error: 'apollo_data_not_available' } unless Legion::Extensions::Apollo::Helpers::DataModels.apollo_entry_available?
+            return { success: false, error: 'invalid_limit' } unless limit.is_a?(Integer) && limit.between?(1, 1000)
+            return { success: false, error: 'invalid_legacy_only' } unless [true, false].include?(legacy_only)
+
+            entry_model = Legion::Extensions::Apollo::Helpers::DataModels.apollo_entry
+            entries = entry_model.exclude(status: 'archived')
+            entries = entries.where(embedding_space_id: nil) if legacy_only
+            entries = entries.where(embedding_space_id: from_space_id) if from_space_id
+            entries = entries.where(Sequel[:id] > after_id) unless after_id.nil?
+            batch = entries.order(:id).limit(limit).all
+            routing = routing.slice(:provider, :model, :instance, :dimensions)
+            updated = 0
+            skipped = 0
+            failures = []
+            batch.each do |entry|
+              document = Legion::Extensions::Apollo::Helpers::Embedding.generate(
+                text: entry.content, task: :document, **routing
+              )
+              changed = entry_model.where(id: entry.id, content: entry.content).exclude(status: 'archived').update(
+                embedding: Legion::Extensions::Apollo::Helpers::Storage.serialize_embedding(db: entry_model.db, vector: document[:vector]),
+                embedding_provenance: Legion::Extensions::Apollo::Helpers::Storage.serialize_provenance(db: entry_model.db, provenance: document[:provenance]),
+                embedding_space_id: document[:provenance][:space_id], embedding_dimensions: document[:vector].length
+              )
+              changed.positive? ? updated += 1 : skipped += 1
+            rescue Sequel::Error, Legion::Extensions::Apollo::Helpers::Embedding::Error => e
+              handle_exception(e, level: :error, operation: 'apollo.maintenance.reembed_entries', entry_id: entry.id)
+              failures << { entry_id: entry.id, error: e.message }
+            end
+            { success: failures.empty?, scanned: batch.size, updated: updated, skipped: skipped,
+              failures: failures, next_after_id: batch.size == limit ? batch.last.id : nil }
+          rescue Sequel::Error => e
+            handle_exception(e, level: :error, operation: 'apollo.maintenance.reembed_entries')
+            { success: false, error: e.message }
+          end
+
           private
 
-          def corroboration_match_for(candidate:, evidence_ids:)
+          def decay_sqlite_entries(db:, alpha:, min_confidence:, min_age_hours:, **)
+            now = Time.now
+            cutoff = now - (min_age_hours * 3600)
+            entries = db[:apollo_entries].exclude(status: 'archived')
+                                         .where(Sequel.function(:coalesce, :updated_at, :created_at) < cutoff)
+            decayed = 0
+            archived = 0
+            db.transaction do
+              entries.order(:id).paged_each(rows_per_fetch: 500, strategy: :filter) do |entry|
+                timestamp = entry[:updated_at] || entry[:created_at]
+                age_days = [(now - timestamp.to_time) / 86_400.0, 1.0].max
+                confidence = entry[:confidence].to_f * ((age_days / (age_days + 1.0))**alpha)
+                updates = { confidence: confidence }
+                if confidence < min_confidence
+                  updates[:status] = 'archived'
+                  archived += 1
+                end
+                db[:apollo_entries].where(id: entry[:id]).update(updates)
+                decayed += 1
+              end
+            end
+            { decayed: decayed, archived: archived, alpha: alpha, threshold: min_confidence, min_age_hours: min_age_hours }
+          end
+
+          def corroboration_match_for(candidate:, evidence_ids:, **)
             return nil if evidence_ids.empty?
 
             scope = candidate.access_scope || 'global'
             return nil if scope != 'global' && candidate.identity_principal_id.nil?
 
+            provenance = Legion::Extensions::Apollo::Helpers::Embedding.parse_provenance(value: candidate[:embedding_provenance])
+            vector = Legion::Extensions::Apollo::Helpers::Similarity.parse_vector(vector: candidate.embedding)
+            return nil unless Legion::Extensions::Apollo::Helpers::Embedding.valid?(vector: vector, provenance: provenance, task: :document)
+
             evidence = Helpers::DataModels.apollo_entry
                                           .where(id: evidence_ids, content_type: candidate.content_type,
-                                                 knowledge_domain: candidate.knowledge_domain, access_scope: scope)
+                                                 knowledge_domain: candidate.knowledge_domain, access_scope: scope,
+                                                 embedding_space_id: provenance[:space_id], embedding_dimensions: provenance[:dimensions])
                                           .exclude(embedding: nil)
             if scope != 'global'
               evidence = evidence.where(
@@ -193,19 +263,25 @@ module Legion
             corroboration_match_for(candidate: candidate, evidence_ids: evidence_ids)
           end
 
-          def corroborates?(candidate:, entry:)
+          def corroborates?(candidate:, entry:, **)
             return false if candidate.id == entry.id
-            return false if bootstrap_confirmation?(entry)
+            return false if bootstrap_confirmation?(entry: entry)
 
             both_known = known_provider?(candidate.source_provider) && known_provider?(entry.source_provider)
             return false if both_known && candidate.source_provider == entry.source_provider
             return false if candidate.source_channel && candidate.source_channel == entry.source_channel
 
+            provenance = Legion::Extensions::Apollo::Helpers::Embedding.parse_provenance(value: candidate[:embedding_provenance])
+            evidence_provenance = Legion::Extensions::Apollo::Helpers::Embedding.parse_provenance(value: entry[:embedding_provenance])
+            vector = Legion::Extensions::Apollo::Helpers::Similarity.parse_vector(vector: entry.embedding)
+            return false unless Legion::Extensions::Apollo::Helpers::Embedding.valid?(vector: vector, provenance: evidence_provenance, task: :document)
+            return false unless Legion::Extensions::Apollo::Helpers::Embedding.compatible?(left: provenance, right: evidence_provenance)
+
             similarity = Helpers::Similarity.cosine_similarity(vec_a: candidate.embedding, vec_b: entry.embedding)
             Helpers::Similarity.above_corroboration_threshold?(similarity: similarity)
           end
 
-          def bootstrap_confirmation_context(entry)
+          def bootstrap_confirmation_context(entry:, **)
             context = entry[:source_context]
             context = Legion::JSON.load(context) if context.is_a?(String)
             context ||= {}
@@ -214,7 +290,7 @@ module Legion
             Legion::JSON.dump(context.transform_keys(&:to_sym).merge(corroboration_mode: 'bootstrap'))
           end
 
-          def bootstrap_confirmation?(entry)
+          def bootstrap_confirmation?(entry:, **)
             return false unless entry.status == 'confirmed'
 
             context = entry[:source_context]

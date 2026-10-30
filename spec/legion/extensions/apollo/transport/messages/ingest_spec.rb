@@ -11,6 +11,7 @@ RSpec.describe Legion::Extensions::Apollo::Transport::Messages::Ingest do
       submitted_by: 'operator', submitted_from: 'terminal', content_hash: 'digest',
       context: { request_id: 'request-1' }, access_scope: 'private', identity_principal_id: 17,
       identity_id: 23, identity_canonical_name: 'operator@example.test', embedding: [0.1, 0.2],
+      embedding_provenance: { space_id: 'a' * 64, dimensions: 2, model: 'embed-model' }, source_model: 'producer-model',
       reply_to: 'reply-queue', correlation_id: 'ingest-123'
     }
     message = described_class.new(**payload, encrypt: false)
