@@ -153,7 +153,7 @@ module Legion
             query = normalize_text_input(query)
             status_defaulted = status.equal?(UNSET)
             requested_status = status_defaulted ? DEFAULT_QUERY_STATUS : status
-            log.debug("Apollo Knowledge.handle_query mode=#{browse_query?(query) ? 'browse' : 'semantic'} query_length=#{query.length} limit=#{limit} statuses=#{Array(requested_status).join(',')} status_defaulted=#{status_defaulted} tags=#{Array(tags).size} domain=#{domain || 'nil'} agent_id=#{agent_id}") # rubocop:disable Layout/LineLength
+            log.debug("Apollo Knowledge.handle_query query_length=#{query.length} limit=#{limit} statuses=#{requested_status.inspect} status_defaulted=#{status_defaulted} domain=#{domain.inspect} agent_id=#{agent_id}") # rubocop:disable Layout/LineLength
             if browse_query?(query)
               return list_entries_chronologically(query: query, limit: limit, status: requested_status,
                                                   status_defaulted: status_defaulted, tags: tags, domain: domain,
@@ -168,16 +168,17 @@ module Legion
                                                   requesting_principal_id: requesting_principal_id)
             end
 
-            sql = Helpers::GraphQuery.build_semantic_search_sql(
+            query_options = {
               limit: limit, min_confidence: min_confidence,
-              statuses: Array(requested_status).map(&:to_s), tags: tags, domain: domain,
-              requesting_principal_id: requesting_principal_id
-            )
+              statuses: Array(requested_status).map(&:to_s), tags: Sequel.pg_array(Array(tags).map(&:to_s)),
+              domain: domain&.to_s, requesting_principal_id: requesting_principal_id&.to_i
+            }
+            sql = Helpers::GraphQuery.build_semantic_search_sql(**query_options)
 
             db = entry_model.db
-            entries = db.fetch(sql, embedding: Sequel.lit("'[#{embedding.join(',')}]'::vector")).all
+            entries = db.fetch(sql, **query_options, embedding: "[#{embedding.join(',')}]").all
 
-            entries = entries.reject { |e| e[:distance].respond_to?(:nan?) && e[:distance].nan? }
+            entries.reject! { |entry| entry[:distance].to_f.nan? }
 
             entries.each do |entry|
               boost_entry_after_query(entry_model, entry)
@@ -203,15 +204,17 @@ module Legion
             return { success: false, error: 'apollo_data_not_available' } unless Helpers::DataModels.apollo_entry_available?
 
             log.debug("Apollo Knowledge.handle_traverse entry_id=#{entry_id} depth=#{depth} relation_types=#{Array(relation_types).join(',')} agent_id=#{agent_id}") # rubocop:disable Layout/LineLength
-            # Whitelist relation_types to prevent SQL injection (they are string-interpolated in build_traversal_sql)
+            # Keep traversal limited to the supported relation vocabulary.
             if relation_types
               allowed = Helpers::Confidence::RELATION_TYPES
-              relation_types = relation_types.select { |t| allowed.include?(t.to_s) }
+              relation_types = relation_types.map(&:to_s).select { |type| allowed.include?(type) }
             end
 
             sql = Helpers::GraphQuery.build_traversal_sql(depth: depth, relation_types: relation_types)
             db = Helpers::DataModels.apollo_entry.db
-            entries = db.fetch(sql, entry_id: entry_id).all
+            entries = db.fetch(sql, entry_id: entry_id, depth: depth, relation_types: relation_types,
+                                   spread_factor: Helpers::GraphQuery.spread_factor,
+                                   min_activation: Helpers::GraphQuery.min_activation).all
 
             if entries.any? && agent_id != 'unknown'
               Helpers::DataModels.apollo_access_log.create(
@@ -276,7 +279,7 @@ module Legion
 
             requesting_principal_id = resolve_requesting_principal_id(requesting_principal_id)
             query = normalize_text_input(query)
-            log.debug("Apollo Knowledge.retrieve_relevant query_length=#{query.length} limit=#{limit} min_confidence=#{min_confidence} tags=#{Array(tags).size} domain=#{domain || 'nil'}") # rubocop:disable Layout/LineLength
+            log.debug("Apollo Knowledge.retrieve_relevant query_length=#{query.length} limit=#{limit} min_confidence=#{min_confidence} tags=#{Array(tags).size} domain=#{domain.inspect}") # rubocop:disable Layout/LineLength
             return { success: true, entries: [], count: 0 } if query.nil? || query.to_s.strip.empty?
 
             embedding = embed_text(query)
@@ -285,15 +288,16 @@ module Legion
               return { success: true, entries: [], count: 0, degraded: :no_embedding }
             end
 
-            sql = Helpers::GraphQuery.build_semantic_search_sql(
+            query_options = {
               limit: limit, min_confidence: min_confidence,
-              statuses: %w[confirmed candidate], tags: tags, domain: domain,
-              requesting_principal_id: requesting_principal_id
-            )
+              statuses: %w[confirmed candidate], tags: Sequel.pg_array(Array(tags).map(&:to_s)),
+              domain: domain&.to_s, requesting_principal_id: requesting_principal_id&.to_i
+            }
+            sql = Helpers::GraphQuery.build_semantic_search_sql(**query_options)
 
             db = Helpers::DataModels.apollo_entry.db
-            entries = db.fetch(sql, embedding: Sequel.lit("'[#{embedding.join(',')}]'::vector")).all
-            entries = entries.reject { |e| e[:distance].respond_to?(:nan?) && e[:distance].nan? }
+            entries = db.fetch(sql, **query_options, embedding: "[#{embedding.join(',')}]").all
+            entries.reject! { |entry| entry[:distance].to_f.nan? }
 
             entries.each do |entry|
               Helpers::DataModels.apollo_entry.where(id: entry[:id]).update(
@@ -509,7 +513,7 @@ module Legion
               identity_principal_id:   metadata[:identity_principal_id],
               identity_id:             metadata[:identity_id],
               identity_canonical_name: metadata[:identity_canonical_name],
-              embedding:               embedding ? Sequel.lit("'[#{embedding.join(',')}]'::vector") : nil
+              embedding:               embedding ? Sequel.lit('?::vector', "[#{embedding.join(',')}]") : nil
             )
             log.info("Apollo Knowledge.handle_ingest created entry_id=#{new_entry.id} status=candidate domain=#{metadata[:domain]} source_agent=#{metadata[:source_agent]} access_scope=#{metadata[:access_scope]}") # rubocop:disable Layout/LineLength
             new_entry.id
@@ -627,9 +631,11 @@ module Legion
             db = Helpers::DataModels.apollo_entry.db
             log.debug("Apollo Knowledge.detect_contradictions entry_id=#{entry_id} similar_limit=#{sim_limit} threshold=#{sim_threshold}")
             similar = db.fetch(
-              "SELECT id, content, embedding FROM apollo_entries WHERE id != :entry_id AND embedding IS NOT NULL ORDER BY embedding <=> :embedding LIMIT #{sim_limit}", # rubocop:disable Layout/LineLength
+              'SELECT id, content, embedding FROM apollo_entries WHERE id != :entry_id AND embedding IS NOT NULL ' \
+              'ORDER BY embedding <=> :embedding LIMIT :limit',
               entry_id:  entry_id,
-              embedding: Sequel.lit("'[#{embedding.join(',')}]'::vector")
+              embedding: Sequel.lit('?::vector', "[#{embedding.join(',')}]"),
+              limit:     sim_limit
             ).all
 
             contradictions = []

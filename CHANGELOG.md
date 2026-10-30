@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.33] - 2026-10-29
+
+### Fixed
+- Bind semantic-search and graph-traversal values through Sequel, including tags, statuses, domains, ownership, limits, confidence thresholds, and traversal depth (#31).
+- Bind vector literals and contradiction-query limits instead of interpolating values into SQL.
+
 ## [0.4.32] - 2026-10-29
 
 ### Fixed
