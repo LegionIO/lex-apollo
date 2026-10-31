@@ -21,8 +21,13 @@ RSpec.describe 'Apollo service lifecycle mutations' do
         String :content
         String :content_type
         String :status
+        String :access_scope, default: 'global'
         Float :confidence
         String :source_context
+        String :embedding
+        String :embedding_space_id
+        Integer :embedding_dimensions
+        String :embedding_provenance
         DateTime :created_at
         DateTime :updated_at
         DateTime :confirmed_at
@@ -36,6 +41,10 @@ RSpec.describe 'Apollo service lifecycle mutations' do
       old = now - (100 * 86_400)
       attributes = { content_type: 'fact', status: 'candidate', confidence: 0.8,
                      source_context: ::JSON.generate(origin: 'preserve'), created_at: now, updated_at: nil }
+      embedding = ApolloSpecEmbedding.result
+      attributes.merge!(embedding: ::JSON.generate(embedding[:vector]), embedding_dimensions: embedding[:dimensions],
+                        embedding_space_id: embedding[:embedding_provenance][:space_id],
+                        embedding_provenance: ::JSON.generate(embedding[:embedding_provenance]))
       db[:apollo_entries].insert(attributes.merge(id: 1, content: 'target'))
       db[:apollo_entries].insert(attributes.merge(id: 2, content: 'protected'))
       db[:apollo_entries].insert(attributes.merge(id: 3, content: 'stale', confidence: 0.04, created_at: old))
@@ -96,7 +105,7 @@ RSpec.describe 'Apollo service lifecycle mutations' do
     RUBY
   end
 
-  def lifecycle_state(operation:)
+  def lifecycle_state(operation:, **)
     stdout, stderr, status = Open3.capture3(
       RbConfig.ruby, '-Ilib', '-Ispec', '-e', lifecycle_script,
       chdir:      File.expand_path('../../../../..', __dir__),

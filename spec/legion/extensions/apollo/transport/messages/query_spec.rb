@@ -1,75 +1,34 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-
-unless defined?(Legion::Transport::Message)
-  module Legion
-    module Transport
-      class Message
-        attr_reader :options
-
-        def initialize(**opts)
-          @options = opts
-        end
-
-        def publish
-          { published: true }
-        end
-      end
-
-      class Exchange
-        def exchange_name
-          'mock'
-        end
-      end
-    end
-  end
-  $LOADED_FEATURES << 'legion/transport/message' unless $LOADED_FEATURES.include?('legion/transport/message')
-  $LOADED_FEATURES << 'legion/transport/exchange' unless $LOADED_FEATURES.include?('legion/transport/exchange')
-end
-
-require 'legion/extensions/apollo/transport/exchanges/apollo'
 require 'legion/extensions/apollo/transport/messages/query'
 
 RSpec.describe Legion::Extensions::Apollo::Transport::Messages::Query do
-  let(:message) do
-    described_class.new(
-      action:         :query,
-      query:          'PKI configuration',
-      limit:          5,
-      min_confidence: 0.3,
-      reply_to:       'reply-queue',
-      correlation_id: 'corr-123'
+  it 'serializes caller filters, identity, action, and reply metadata on the canonical wire' do
+    payload = {
+      action: 'retrieve', query: 'PKI configuration', limit: 5, min_confidence: 0.3,
+      status: ['confirmed'], tags: %w[vault pki], tag_match: 'all', domain: 'infrastructure',
+      agent_id: 'worker-1', requesting_principal_id: 42, exclude_source_agents: ['worker-1'],
+      reply_to: 'reply-queue', correlation_id: 'corr-123'
+    }
+    message = described_class.new(**payload, encrypt: false)
+
+    expect(Legion::JSON.load(message.encode_message)).to eq(payload)
+    expect(message.publish_envelope_options(options: payload)).to include(
+      routing_key: 'legion.apollo.query', reply_to: 'reply-queue', correlation_id: 'corr-123'
     )
   end
 
-  describe '#routing_key' do
-    it 'returns legion.apollo.query' do
-      expect(message.routing_key).to eq('legion.apollo.query')
-    end
+  it 'preserves explicit null status and principal without manufacturing omitted fields' do
+    message = described_class.new(action: 'query', query: '', status: nil, requesting_principal_id: nil, encrypt: false)
+    payload = Legion::JSON.load(message.encode_message)
+
+    expect(payload).to eq(action: 'query', query: '', status: nil, requesting_principal_id: nil)
   end
 
-  describe '#message' do
-    it 'includes query params' do
-      msg = message.message
-      expect(msg[:action]).to eq(:query)
-      expect(msg[:query]).to eq('PKI configuration')
-      expect(msg[:limit]).to eq(5)
-      expect(msg[:reply_to]).to eq('reply-queue')
-      expect(msg[:correlation_id]).to eq('corr-123')
-    end
+  it 'carries traversal parameters without synthesizing a query' do
+    payload = { action: 'traverse', entry_id: 'entry-1', depth: 3, relation_types: ['supports'], agent_id: 'worker-1' }
 
-    it 'compacts nil values' do
-      simple = described_class.new(action: :query, query: 'test')
-      msg = simple.message
-      expect(msg).not_to have_key(:tags)
-      expect(msg).not_to have_key(:relation_types)
-    end
-  end
-
-  describe '#type' do
-    it 'returns apollo_query' do
-      expect(message.type).to eq('apollo_query')
-    end
+    expect(Legion::JSON.load(described_class.new(**payload, encrypt: false).encode_message)).to eq(payload)
   end
 end

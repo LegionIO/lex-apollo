@@ -4,6 +4,8 @@ require 'legion/json'
 require 'legion/settings'
 require_relative '../helpers/confidence'
 require_relative '../helpers/data_models'
+require_relative '../helpers/embedding'
+require_relative '../helpers/storage'
 
 module Legion
   module Extensions
@@ -74,12 +76,18 @@ module Legion
             }
           end
 
-          def deprecate_entry(entry_id:, reason:, **)
+          def deprecate_entry(entry_id:, reason:, requesting_principal_id: nil, **)
             return { action: :deprecate, entry_id: entry_id, reason: reason } unless Legion::Extensions::Apollo::Helpers::DataModels.apollo_entry_available?
 
             entry_model = Legion::Extensions::Apollo::Helpers::DataModels.apollo_entry
+            requesting_principal_id = resolve_requesting_principal_id(requesting_principal_id)
             entry_model.db.transaction do
-              entry = entry_model.for_update.with_pk(entry_id)
+              entries = entry_model.for_update
+              if requesting_principal_id
+                entries = entries.where(Sequel.lit(Helpers::GraphQuery.access_scope_sql(global_only: requesting_principal_id.zero?),
+                                                   requesting_principal_id: requesting_principal_id))
+              end
+              entry = entries.with_pk(entry_id)
               next({ success: false, error: 'entry_not_found', entry_id: entry_id }) unless entry
 
               context = entry[:source_context]
@@ -101,28 +109,38 @@ module Legion
           end
 
           def handle_ingest(content: nil, content_type: nil, tags: [], source_agent: 'unknown', # rubocop:disable Metrics/ParameterLists
-                            source_provider: nil, source_channel: nil, knowledge_domain: nil,
+                            source_provider: nil, source_model: nil, source_channel: nil, knowledge_domain: nil,
                             submitted_by: nil, submitted_from: nil, content_hash: nil, context: {},
-                            skip: false, access_scope: 'global', embedding: nil, **)
+                            skip: false, access_scope: 'global', embedding: nil, embedding_provenance: nil,
+                            identity_principal_id: UNSET, identity_id: UNSET, identity_canonical_name: UNSET, **)
             return { status: :skipped } if skip
 
-            identity = resolve_process_identity
+            identity = resolve_process_identity(principal_id: identity_principal_id, identity_id: identity_id,
+                                                canonical_name: identity_canonical_name)
+            access_scope = (access_scope || 'global').to_s
+            return { success: false, error: 'invalid_access_scope' } unless %w[global private team].include?(access_scope)
+            if access_scope != 'global' && !(identity[:principal_id].is_a?(Integer) && identity[:principal_id].positive?)
+              return { success: false, error: 'identity_required' }
+            end
+
             content = normalize_text_input(content)
             content_type = normalize_content_type(content_type.nil? ? :observation : content_type)
             log.debug("Apollo Knowledge.handle_ingest content_length=#{content.length} content_type=#{content_type} tags=#{Array(tags).size} source_agent=#{source_agent} source_channel=#{source_channel || 'nil'}") # rubocop:disable Layout/LineLength
             early_error = ingest_early_return_error(content: content, content_type: content_type, tags: tags)
             return early_error if early_error
 
-            hash = content_hash || (defined?(Helpers::Writeback) ? Helpers::Writeback.content_hash(content) : nil)
-            existing = active_duplicate_for_hash(hash, access_scope:          access_scope,
-                                                       identity_principal_id: identity[:principal_id])
+            hash = content_hash || Legion::Extensions::Apollo::Helpers::Writeback.content_hash(content: content)
+            existing = active_duplicate_for_hash(content_hash: hash, access_scope: access_scope,
+                                                 identity_principal_id: identity[:principal_id])
             if existing
+              refresh_duplicate_embedding(entry: existing)
               log.info("Apollo Knowledge.handle_ingest deduped entry_id=#{existing.id} source_agent=#{source_agent}")
               return { success: true, entry_id: existing.id, deduped: true }
             end
 
-            embedding = embed_text(content) unless usable_embedding?(embedding)
-            content_type_sym = content_type.to_s
+            document = Legion::Extensions::Apollo::Helpers::Embedding.document(
+              text: content, vector: embedding, provenance: embedding_provenance
+            )
             metadata = ingest_metadata(tags: tags, knowledge_domain: knowledge_domain, source_agent: source_agent,
                                        source_provider: source_provider, source_channel: source_channel,
                                        submitted_by: submitted_by, submitted_from: submitted_from,
@@ -131,39 +149,24 @@ module Legion
                                        identity_id: identity[:identity_id],
                                        identity_canonical_name: identity[:canonical_name])
 
-            entry_model = Helpers::DataModels.apollo_entry
-            result = entry_model.db.transaction do
-              corroborated, existing_id = find_corroboration(
-                embedding: embedding, content_type: content_type_sym, metadata: metadata
-              )
-              unless corroborated
-                existing_id = create_candidate_entry(
-                  content: content, content_type: content_type_sym, context: context,
-                  metadata: metadata, content_hash: hash, embedding: embedding
-                )
-              end
-              raise Sequel::Error, 'entry_persistence_failed' unless existing_id
-
-              upsert_expertise(source_agent: metadata[:source_agent], domain: metadata[:domain])
-              Helpers::DataModels.apollo_access_log.create(
-                entry_id: existing_id, agent_id: metadata[:source_agent], action: 'ingest'
-              )
-              { success: true, entry_id: existing_id, status: corroborated ? 'corroborated' : 'candidate',
-                corroborated: corroborated, contradictions: [] }
-            end
-            schedule_contradiction_detection(entry_id: result[:entry_id], embedding: embedding, content: content)
+            context = (context.is_a?(Hash) ? context : {}).merge(source_model: source_model) unless source_model.nil?
+            result = persist_ingest(content: content, content_type: content_type.to_s, context: context,
+                                    metadata: metadata, content_hash: hash,
+                                    embedding: document[:vector], provenance: document[:provenance])
+            schedule_contradiction_detection(entry_id: result[:entry_id])
             log.debug("Apollo Knowledge.handle_ingest complete entry_id=#{result[:entry_id]} corroborated=#{result[:corroborated]}")
             result
-          rescue Sequel::Error => e
+          rescue Sequel::Error, Legion::Extensions::Apollo::Helpers::Embedding::Error => e
             handle_exception(e, level: :error, operation: 'apollo.knowledge.handle_ingest')
             { success: false, error: e.message }
           end
 
-          def handle_query(query:, limit: Helpers::GraphQuery.default_query_limit, # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/ParameterLists
+          def handle_query(query:, limit: Helpers::GraphQuery.default_query_limit, # rubocop:disable Metrics/CyclomaticComplexity, Metrics/ParameterLists
                            min_confidence: Helpers::GraphQuery.default_query_min_confidence,
-                           status: UNSET, tags: nil, domain: nil, agent_id: 'unknown',
+                           status: UNSET, tags: nil, tag_match: :any, exclude_source_agents: [], domain: nil, agent_id: 'unknown',
                            requesting_principal_id: nil, **)
             return { success: false, error: 'apollo_data_not_available' } unless Helpers::DataModels.apollo_entry_available?
+            return { success: false, error: 'invalid_tag_match' } unless %w[any all].include?(tag_match.to_s)
 
             requesting_principal_id = resolve_requesting_principal_id(requesting_principal_id)
             entry_model = Helpers::DataModels.apollo_entry
@@ -174,7 +177,8 @@ module Legion
             if browse_query?(query)
               return list_entries_chronologically(query: query, limit: limit, status: requested_status,
                                                   status_defaulted: status_defaulted, tags: tags, domain: domain,
-                                                  requesting_principal_id: requesting_principal_id)
+                                                  requesting_principal_id: requesting_principal_id, min_confidence: min_confidence,
+                                                  tag_match: tag_match, exclude_source_agents: exclude_source_agents)
             end
 
             unless Helpers::DataModels.apollo_access_log_available?
@@ -182,38 +186,32 @@ module Legion
               return { success: false, error: 'apollo_data_not_available' }
             end
 
-            embedding = embed_text(query)
+            embedding = embed_text(text: query, task: :query)
             if embedding.nil?
               log.warn('Apollo Knowledge.handle_query embedding unavailable; falling back to browse query')
               return list_entries_chronologically(query: query, limit: limit, status: requested_status,
                                                   status_defaulted: status_defaulted, tags: tags, domain: domain,
-                                                  requesting_principal_id: requesting_principal_id)
+                                                  requesting_principal_id: requesting_principal_id, min_confidence: min_confidence,
+                                                  tag_match: tag_match, exclude_source_agents: exclude_source_agents)
             end
 
             query_options = {
               limit: limit, min_confidence: min_confidence,
-              statuses: Array(requested_status).map(&:to_s), tags: Sequel.pg_array(Array(tags).map(&:to_s)),
+              statuses: Array(requested_status).map(&:to_s), tags: Array(tags).map(&:to_s),
+              tag_match: tag_match, exclude_source_agents: Array(exclude_source_agents).map(&:to_s),
               domain: domain&.to_s, requesting_principal_id: requesting_principal_id&.to_i
             }
-            sql = Helpers::GraphQuery.build_semantic_search_sql(**query_options)
-
-            db = entry_model.db
-            entries = db.fetch(sql, **query_options, embedding: "[#{embedding.join(',')}]").all
-
-            entries.reject! { |entry| entry[:distance].to_f.nan? }
+            entries = Legion::Extensions::Apollo::Helpers::Storage.semantic_search(
+              db: entry_model.db, embedding: embedding[:vector], provenance: embedding[:provenance], **query_options
+            )
 
             entries.each do |entry|
               boost_entry_after_query(entry_model, entry)
             end
 
-            record_query_access(entry_id: entries.first&.dig(:id), agent_id: agent_id) if entries.any?
+            record_query_access(entry_id: entries.first[:id], agent_id: agent_id) if entries.any?
 
-            formatted = entries.map do |entry|
-              { id: entry[:id], content: entry[:content], content_type: entry[:content_type],
-                confidence: entry[:confidence], distance: entry[:distance]&.to_f,
-                tags: entry[:tags], source_agent: entry[:source_agent],
-                knowledge_domain: entry[:knowledge_domain] }
-            end
+            formatted = entries.map { |entry| format_entry(entry: entry) }
 
             log.info("Apollo Knowledge.handle_query results=#{formatted.size} mode=semantic agent_id=#{agent_id}")
             { success: true, entries: formatted, count: formatted.size }
@@ -222,7 +220,8 @@ module Legion
             { success: false, error: e.message }
           end
 
-          def handle_traverse(entry_id:, depth: Helpers::GraphQuery.default_depth, relation_types: nil, agent_id: 'unknown', **)
+          def handle_traverse(entry_id:, depth: Helpers::GraphQuery.default_depth, relation_types: nil,
+                              agent_id: 'unknown', requesting_principal_id: nil, **)
             return { success: false, error: 'apollo_data_not_available' } unless Helpers::DataModels.apollo_entry_available?
 
             if agent_id != 'unknown' && !Helpers::DataModels.apollo_access_log_available?
@@ -237,9 +236,12 @@ module Legion
               relation_types = relation_types.map(&:to_s).select { |type| allowed.include?(type) }
             end
 
-            sql = Helpers::GraphQuery.build_traversal_sql(depth: depth, relation_types: relation_types)
+            requesting_principal_id = resolve_requesting_principal_id(requesting_principal_id)
+            sql = Helpers::GraphQuery.build_traversal_sql(depth: depth, relation_types: relation_types,
+                                                          requesting_principal_id: requesting_principal_id)
             db = Helpers::DataModels.apollo_entry.db
             entries = db.fetch(sql, entry_id: entry_id, depth: depth, relation_types: relation_types,
+                                   requesting_principal_id: requesting_principal_id,
                                    spread_factor: Helpers::GraphQuery.spread_factor,
                                    min_activation: Helpers::GraphQuery.min_activation).all
 
@@ -251,7 +253,8 @@ module Legion
 
             formatted = entries.map do |entry|
               { id: entry[:id], content: entry[:content], content_type: entry[:content_type],
-                confidence: entry[:confidence], tags: entry[:tags], source_agent: entry[:source_agent],
+                confidence: entry[:confidence], tags: Legion::Extensions::Apollo::Helpers::Storage.deserialize_tags(tags: entry[:tags]),
+                source_agent: entry[:source_agent],
                 depth: entry[:depth], activation: entry[:activation] }
             end
 
@@ -278,12 +281,13 @@ module Legion
             redistributed = 0
             entries.each do |entry|
               if store
+                tags = Legion::Extensions::Apollo::Helpers::Storage.deserialize_tags(tags: entry.tags)
                 trace = Legion::Extensions::Agentic::Memory::Trace::Helpers::Trace.new_trace(
                   type:            :semantic,
                   content_payload: { content: entry.content, source_agent: agent_id,
-                                     content_type: entry.content_type, tags: Array(entry.tags) },
+                                     content_type: entry.content_type, tags: tags },
                   strength:        entry.confidence.to_f,
-                  domain_tag:      Array(entry.tags).first || 'general'
+                  domain_tag:      tags.first || 'general'
                 )
                 store.store(trace)
               end
@@ -297,19 +301,21 @@ module Legion
             { success: false, error: e.message }
           end
 
-          def retrieve_relevant(query: nil, limit: settings[:query][:retrieval_limit],
+          def retrieve_relevant(query: nil, limit: settings[:query][:retrieval_limit], # rubocop:disable Metrics/ParameterLists
                                 min_confidence: Helpers::GraphQuery.default_query_min_confidence,
-                                tags: nil, domain: nil, skip: false, requesting_principal_id: nil, **)
+                                status: %i[confirmed candidate], tags: nil, tag_match: :any, exclude_source_agents: [], domain: nil,
+                                skip: false, requesting_principal_id: nil, **)
             return { status: :skipped } if skip
 
             return { success: false, error: 'apollo_data_not_available' } unless Helpers::DataModels.apollo_entry_available?
+            return { success: false, error: 'invalid_tag_match' } unless %w[any all].include?(tag_match.to_s)
 
             requesting_principal_id = resolve_requesting_principal_id(requesting_principal_id)
             query = normalize_text_input(query)
             log.debug("Apollo Knowledge.retrieve_relevant query_length=#{query.length} limit=#{limit} min_confidence=#{min_confidence} tags=#{Array(tags).size} domain=#{domain.inspect}") # rubocop:disable Layout/LineLength
-            return { success: true, entries: [], count: 0 } if query.nil? || query.to_s.strip.empty?
+            return { success: true, entries: [], count: 0 } if query.to_s.strip.empty?
 
-            embedding = embed_text(query)
+            embedding = embed_text(text: query, task: :query)
             if embedding.nil?
               log.warn('Apollo Knowledge.retrieve_relevant embedding unavailable; returning empty result')
               return { success: true, entries: [], count: 0, degraded: :no_embedding }
@@ -317,14 +323,14 @@ module Legion
 
             query_options = {
               limit: limit, min_confidence: min_confidence,
-              statuses: %w[confirmed candidate], tags: Sequel.pg_array(Array(tags).map(&:to_s)),
+              statuses: Array(status).map(&:to_s), tags: Array(tags).map(&:to_s),
+              tag_match: tag_match, exclude_source_agents: Array(exclude_source_agents).map(&:to_s),
               domain: domain&.to_s, requesting_principal_id: requesting_principal_id&.to_i
             }
-            sql = Helpers::GraphQuery.build_semantic_search_sql(**query_options)
-
-            db = Helpers::DataModels.apollo_entry.db
-            entries = db.fetch(sql, **query_options, embedding: "[#{embedding.join(',')}]").all
-            entries.reject! { |entry| entry[:distance].to_f.nan? }
+            entries = Legion::Extensions::Apollo::Helpers::Storage.semantic_search(
+              db: Helpers::DataModels.apollo_entry.db,
+              embedding: embedding[:vector], provenance: embedding[:provenance], **query_options
+            )
 
             entries.each do |entry|
               Helpers::DataModels.apollo_entry.where(id: entry[:id]).update(
@@ -333,12 +339,7 @@ module Legion
               )
             end
 
-            formatted = entries.map do |entry|
-              { id: entry[:id], content: entry[:content], content_type: entry[:content_type],
-                confidence: entry[:confidence], distance: entry[:distance]&.to_f,
-                tags: entry[:tags], source_agent: entry[:source_agent],
-                knowledge_domain: entry[:knowledge_domain] }
-            end
+            formatted = entries.map { |entry| format_entry(entry: entry) }
 
             log.info("Apollo Knowledge.retrieve_relevant results=#{formatted.size} limit=#{limit}")
             { success: true, entries: formatted, count: formatted.size }
@@ -357,7 +358,7 @@ module Legion
             allowed = allowed_domains_for(target_domain)
 
             dataset = conn[:apollo_entries]
-                      .where(status: 'confirmed')
+                      .where(status: 'confirmed', access_scope: 'global')
                       .where { confidence >= min_confidence }
                       .limit(limit)
 
@@ -368,7 +369,7 @@ module Legion
             formatted = entries.map do |entry|
               { id: entry[:id], content: entry[:content], content_type: entry[:content_type],
                 confidence: entry[:confidence], knowledge_domain: entry[:knowledge_domain],
-                tags: entry[:tags], source_agent: entry[:source_agent] }
+                tags: Legion::Extensions::Apollo::Helpers::Storage.deserialize_tags(tags: entry[:tags]), source_agent: entry[:source_agent] }
             end
 
             { success: true, entries: formatted, count: formatted.size, target_domain: target_domain }
@@ -414,6 +415,28 @@ module Legion
 
           private
 
+          def persist_ingest(content:, content_type:, context:, metadata:, content_hash:, embedding:, provenance:, **)
+            Helpers::DataModels.apollo_entry.db.transaction do
+              corroborated, existing_id = find_corroboration(
+                embedding: embedding, provenance: provenance, content_type: content_type, metadata: metadata
+              )
+              unless corroborated
+                existing_id = create_candidate_entry(
+                  content: content, content_type: content_type, context: context,
+                  metadata: metadata, content_hash: content_hash, embedding: embedding, provenance: provenance
+                )
+              end
+              raise Sequel::Error, 'entry_persistence_failed' unless existing_id
+
+              upsert_expertise(source_agent: metadata[:source_agent], domain: metadata[:domain])
+              Helpers::DataModels.apollo_access_log.create(
+                entry_id: existing_id, agent_id: metadata[:source_agent], action: 'ingest'
+              )
+              { success: true, entry_id: existing_id, status: corroborated ? 'corroborated' : 'candidate',
+                corroborated: corroborated, contradictions: [] }
+            end
+          end
+
           def ingest_early_return_error(content:, content_type:, tags:)
             if content.strip.empty?
               safe_tags = Array(tags).map(&:to_s).map { |t| t.gsub(/[\r\n]+/, ' ') }
@@ -439,26 +462,11 @@ module Legion
             Helpers::Confidence::CONTENT_TYPES.include?(sym) ? sym : :observation
           end
 
-          def embed_text(text)
-            text = normalize_text_input(text)
-            log.debug("Apollo Knowledge.embed_text text_length=#{text.length}")
-            result = Legion::LLM::Call::Embeddings.generate(text: text)
-            vector = result.is_a?(Hash) ? result[:vector] : result
-            if usable_embedding?(vector)
-              log.debug("Apollo Knowledge.embed_text vector_dimensions=#{vector.length}")
-              vector
-            else
-              log.warn('Apollo Knowledge.embed_text returned no usable vector; skipping embedding')
-              nil
-            end
-          rescue StandardError => e
+          def embed_text(text:, task: :document, **)
+            Legion::Extensions::Apollo::Helpers::Embedding.generate(text: normalize_text_input(text), task: task)
+          rescue Legion::Extensions::Apollo::Helpers::Embedding::Error => e
             handle_exception(e, level: :warn, operation: 'apollo.knowledge.embed_text')
             nil
-          end
-
-          def usable_embedding?(vector)
-            vector.is_a?(Array) && vector.any? { |value| value != 0.0 } &&
-              vector.all? { |value| value.is_a?(Numeric) && value.real? && value.finite? }
           end
 
           def normalize_text_input(value)
@@ -491,19 +499,34 @@ module Legion
             normalize_text_input(value)[0, max_length]
           end
 
-          def active_duplicate_for_hash(hash, access_scope: nil, identity_principal_id: nil)
-            return nil unless hash
+          def active_duplicate_for_hash(content_hash:, access_scope: nil, identity_principal_id: nil, **)
+            return nil unless content_hash
 
             dataset = Helpers::DataModels.apollo_entry
-                                         .where(content_hash: hash)
+                                         .where(content_hash: content_hash, access_scope: access_scope)
                                          .exclude(status: 'archived')
 
-            dataset = dataset.where(identity_principal_id: identity_principal_id) if access_scope == 'private' && identity_principal_id
+            dataset = dataset.where(identity_principal_id: identity_principal_id) if access_scope != 'global'
 
             existing = dataset.first
-            existing&.update(confidence: [existing.confidence + Helpers::Confidence.retrieval_boost, 1.0].min)
             log.debug("Apollo Knowledge.active_duplicate_for_hash matched entry_id=#{existing.id}") if existing
             existing
+          end
+
+          def refresh_duplicate_embedding(entry:, **)
+            provenance = Legion::Extensions::Apollo::Helpers::Embedding.parse_provenance(value: entry[:embedding_provenance])
+            vector = Legion::Extensions::Apollo::Helpers::Similarity.parse_vector(vector: entry[:embedding])
+            updates = { confidence: [entry.confidence + Helpers::Confidence.retrieval_boost, 1.0].min, updated_at: Time.now }
+            unless Legion::Extensions::Apollo::Helpers::Embedding.valid?(vector: vector, provenance: provenance, task: :document)
+              document = Legion::Extensions::Apollo::Helpers::Embedding.generate(text: entry.content, task: :document)
+              db = Helpers::DataModels.apollo_entry.db
+              updates.merge!(
+                embedding: Legion::Extensions::Apollo::Helpers::Storage.serialize_embedding(db: db, vector: document[:vector]),
+                embedding_provenance: Legion::Extensions::Apollo::Helpers::Storage.serialize_provenance(db: db, provenance: document[:provenance]),
+                embedding_space_id: document[:provenance][:space_id], embedding_dimensions: document[:vector].length
+              )
+            end
+            Helpers::DataModels.apollo_entry.db.transaction { entry.update(updates) }
           end
 
           def ingest_metadata(tags:, knowledge_domain:, source_agent:, source_provider:, source_channel:, # rubocop:disable Metrics/ParameterLists
@@ -525,7 +548,7 @@ module Legion
               identity_canonical_name: identity_canonical_name&.to_s&.slice(0, 255) }
           end
 
-          def create_candidate_entry(content:, content_type:, context:, metadata:, content_hash:, embedding:)
+          def create_candidate_entry(content:, content_type:, context:, metadata:, content_hash:, embedding:, provenance:, **)
             entry_model = Helpers::DataModels.apollo_entry
             new_entry = entry_model.db.transaction(savepoint: true) do
               entry_model.create(
@@ -536,7 +559,7 @@ module Legion
                 source_provider:         metadata[:source_provider],
                 source_channel:          metadata[:source_channel],
                 source_context:          json_dump(context.is_a?(Hash) ? context : {}),
-                tags:                    Sequel.pg_array(metadata[:tags]),
+                tags:                    Legion::Extensions::Apollo::Helpers::Storage.serialize_tags(db: entry_model.db, tags: metadata[:tags]),
                 status:                  'candidate',
                 knowledge_domain:        metadata[:domain],
                 submitted_by:            metadata[:submitted_by],
@@ -546,13 +569,18 @@ module Legion
                 identity_principal_id:   metadata[:identity_principal_id],
                 identity_id:             metadata[:identity_id],
                 identity_canonical_name: metadata[:identity_canonical_name],
-                embedding:               embedding ? Sequel.lit('?::vector', "[#{embedding.join(',')}]") : nil
+                embedding:               Legion::Extensions::Apollo::Helpers::Storage.serialize_embedding(db: entry_model.db, vector: embedding),
+                embedding_provenance:    Legion::Extensions::Apollo::Helpers::Storage.serialize_provenance(db: entry_model.db, provenance: provenance),
+                embedding_space_id:      provenance[:space_id],
+                embedding_dimensions:    embedding.length
               )
             end
             log.info("Apollo Knowledge.handle_ingest created entry_id=#{new_entry.id} status=candidate domain=#{metadata[:domain]} source_agent=#{metadata[:source_agent]} access_scope=#{metadata[:access_scope]}") # rubocop:disable Layout/LineLength
             new_entry.id
           rescue Sequel::UniqueConstraintViolation => e
-            winner = entry_model.where(content_hash: content_hash).exclude(status: 'archived').first
+            winner_scope = entry_model.where(content_hash: content_hash, access_scope: metadata[:access_scope]).exclude(status: 'archived')
+            winner_scope = winner_scope.where(identity_principal_id: metadata[:identity_principal_id]) if metadata[:access_scope] != 'global'
+            winner = winner_scope.first
             if winner
               log.warn("Apollo Knowledge.create_candidate_entry race_dedup entry_id=#{winner.id} content_hash=#{content_hash} error=#{e.message}")
               return winner.id
@@ -566,23 +594,28 @@ module Legion
             query.to_s.strip.length < 3
           end
 
-          def list_entries_chronologically(query:, limit:, status:, status_defaulted:, tags:, domain:, requesting_principal_id: nil)
+          def list_entries_chronologically(query:, limit:, status:, status_defaulted:, tags:, domain:, # rubocop:disable Metrics/ParameterLists
+                                           min_confidence:, requesting_principal_id: nil, tag_match: :any, exclude_source_agents: [], **)
             log.debug("Apollo Knowledge.list_entries_chronologically limit=#{limit} statuses=#{Array(status).join(',')} status_defaulted=#{status_defaulted} tags=#{Array(tags).size} domain=#{domain || 'nil'}") # rubocop:disable Layout/LineLength
             dataset = Helpers::DataModels.apollo_entry.exclude(status: 'archived')
             requested = Array(status).map(&:to_s).reject(&:empty?)
             dataset = dataset.where(status: requested) unless status_defaulted || requested.empty?
-            dataset = dataset.where(Sequel.lit('tags && ?', Sequel.pg_array(Array(tags)))) if tags && !Array(tags).empty?
-            dataset = dataset.where(knowledge_domain: domain) if domain && !domain.to_s.empty?
+            dataset = Legion::Extensions::Apollo::Helpers::Storage.filter_tags(dataset: dataset, tags: tags, tag_match: tag_match)
+            dataset = dataset.where { confidence >= min_confidence }
+            if Array(exclude_source_agents).any?
+              dataset = dataset.where(Sequel.lit('(source_agent IS NULL OR source_agent NOT IN ?)', Array(exclude_source_agents).map(&:to_s)))
+            end
+            dataset = dataset.where(knowledge_domain: domain) unless domain.to_s.empty?
 
             if requesting_principal_id
               dataset = dataset.where(
-                Sequel.lit(Legion::Extensions::Apollo::Helpers::GraphQuery.access_scope_sql,
+                Sequel.lit(Legion::Extensions::Apollo::Helpers::GraphQuery.access_scope_sql(global_only: requesting_principal_id.zero?),
                            requesting_principal_id: requesting_principal_id.to_i)
               )
             end
 
             entries = dataset.order(Sequel.desc(:created_at)).limit(limit).all.map do |entry|
-              format_entry(entry.is_a?(Hash) ? entry : entry.values)
+              format_entry(entry: entry.is_a?(Hash) ? entry : entry.values)
             end
             log.info("Apollo Knowledge.list_entries_chronologically results=#{entries.size}")
             { success: true, mode: :browse, query: query, entries: entries, count: entries.size }
@@ -591,10 +624,10 @@ module Legion
             { success: false, error: e.message }
           end
 
-          def format_entry(entry)
+          def format_entry(entry:, **)
             { id: entry[:id], content: entry[:content], content_type: entry[:content_type],
               confidence: entry[:confidence], distance: entry[:distance]&.to_f,
-              tags: entry[:tags], source_agent: entry[:source_agent],
+              tags: Legion::Extensions::Apollo::Helpers::Storage.deserialize_tags(tags: entry[:tags]), source_agent: entry[:source_agent],
               knowledge_domain: entry[:knowledge_domain] }
           end
 
@@ -631,43 +664,43 @@ module Legion
             settings[:contradiction][:enabled] == true
           end
 
-          def schedule_contradiction_detection(entry_id:, embedding:, content:)
+          def schedule_contradiction_detection(entry_id:, **)
             return unless contradiction_detection_enabled?
-            return unless embedding && Helpers::DataModels.apollo_entry_available?
+            return unless Helpers::DataModels.apollo_entry_available?
 
-            Legion::Extensions::Apollo::Actor::ContradictionScanner.enqueue(
-              entry_id: entry_id, embedding: embedding, content: content
-            )
+            Legion::Extensions::Apollo::Actor::ContradictionScanner.enqueue(entry_id: entry_id)
             log.debug("Apollo Knowledge.schedule_contradiction_detection enqueued entry_id=#{entry_id}")
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'apollo.knowledge.schedule_contradiction_detection')
           end
 
-          def detect_contradictions(entry_id, embedding, content)
-            return [] unless embedding && Helpers::DataModels.apollo_entry_available?
+          def detect_contradictions(entry_id:, **)
+            return [] unless Helpers::DataModels.apollo_entry_available?
+
+            entry_model = Helpers::DataModels.apollo_entry
+            entry = entry_model[entry_id]
+            return [] unless entry && entry.status != 'archived'
+
+            provenance = Legion::Extensions::Apollo::Helpers::Embedding.parse_provenance(value: entry[:embedding_provenance])
+            embedding = Legion::Extensions::Apollo::Helpers::Similarity.parse_vector(vector: entry[:embedding])
+            return [] unless Legion::Extensions::Apollo::Helpers::Embedding.valid?(vector: embedding, provenance: provenance, task: :document)
+            return [] if entry.access_scope != 'global' && !entry.identity_principal_id.to_i.positive?
 
             sim_limit = settings[:contradiction][:similar_limit]
             sim_threshold = settings[:contradiction][:similarity_threshold]
             rel_weight = settings[:contradiction][:relation_weight]
-
-            db = Helpers::DataModels.apollo_entry.db
-            log.debug("Apollo Knowledge.detect_contradictions entry_id=#{entry_id} similar_limit=#{sim_limit} threshold=#{sim_threshold}")
-            similar = db.fetch(
-              'SELECT id, content, embedding FROM apollo_entries WHERE id != :entry_id AND embedding IS NOT NULL ' \
-              'ORDER BY embedding <=> :embedding LIMIT :limit',
-              entry_id:  entry_id,
-              embedding: Sequel.lit('?::vector', "[#{embedding.join(',')}]"),
-              limit:     sim_limit
-            ).all
+            db = entry_model.db
+            similar = Legion::Extensions::Apollo::Helpers::Storage.semantic_search(
+              db: db, embedding: embedding, provenance: provenance, limit: sim_limit + 1,
+              min_confidence: 0.0, statuses: %w[candidate confirmed], domain: entry.knowledge_domain,
+              access_scope: entry.access_scope, identity_principal_id: entry.identity_principal_id
+            )
 
             contradictions = []
             similar.each do |existing|
-              existing_embedding = existing[:embedding]
-              next unless existing_embedding
-
-              sim = Helpers::Similarity.cosine_similarity(vec_a: embedding, vec_b: existing_embedding)
-              next unless sim > sim_threshold
-              next unless llm_detects_conflict?(content, existing[:content])
+              next if existing[:id] == entry_id
+              next unless 1.0 - existing[:distance] > sim_threshold
+              next unless llm_detects_conflict?(content_a: entry.content, content_b: existing[:content])
 
               contradictions << existing[:id]
             end
@@ -690,7 +723,7 @@ module Legion
             raise
           end
 
-          def llm_detects_conflict?(content_a, content_b)
+          def llm_detects_conflict?(content_a:, content_b:, **)
             return false unless defined?(Legion::LLM) && Legion::LLM.respond_to?(:structured)
 
             a = content_a.to_s[0, CONFLICT_CHECK_MAX_CHARS]
@@ -709,7 +742,7 @@ module Legion
             false
           end
 
-          def find_corroboration(embedding:, content_type:, metadata:)
+          def find_corroboration(embedding:, provenance:, content_type:, metadata:, **)
             return [false, nil] unless embedding
             return [false, nil] if metadata[:access_scope] != 'global' && metadata[:identity_principal_id].nil?
 
@@ -719,20 +752,19 @@ module Legion
             # Candidate evidence is retained for the bounded maintenance bootstrap scan.
             existing = Helpers::DataModels.apollo_entry
                                           .where(content_type: content_type, knowledge_domain: metadata[:domain],
-                                                 access_scope: metadata[:access_scope], status: 'confirmed')
+                                                 access_scope: metadata[:access_scope], status: 'confirmed',
+                                                 embedding_space_id: provenance[:space_id], embedding_dimensions: provenance[:dimensions])
                                           .exclude(embedding: nil)
-            if metadata[:access_scope] != 'global'
-              existing = existing.where(
-                Sequel.lit(Legion::Extensions::Apollo::Helpers::GraphQuery.access_scope_sql,
-                           requesting_principal_id: metadata[:identity_principal_id])
-              )
-            end
+            existing = existing.where(identity_principal_id: metadata[:identity_principal_id]) if metadata[:access_scope] != 'global'
             existing = existing.limit(scan_limit)
 
             existing.each do |entry|
-              next unless entry.embedding
+              stored_provenance = Legion::Extensions::Apollo::Helpers::Embedding.parse_provenance(value: entry[:embedding_provenance])
+              stored_vector = Legion::Extensions::Apollo::Helpers::Similarity.parse_vector(vector: entry.embedding)
+              next unless Legion::Extensions::Apollo::Helpers::Embedding.valid?(vector: stored_vector, provenance: stored_provenance, task: :document)
+              next unless Legion::Extensions::Apollo::Helpers::Embedding.compatible?(left: provenance, right: stored_provenance)
 
-              sim = Helpers::Similarity.cosine_similarity(vec_a: embedding, vec_b: entry.embedding)
+              sim = Helpers::Similarity.cosine_similarity(vec_a: embedding, vec_b: stored_vector)
               next unless Helpers::Similarity.above_corroboration_threshold?(similarity: sim)
 
               same_provider_wt = settings[:corroboration][:same_provider_weight]
@@ -786,7 +818,12 @@ module Legion
             end
           end
 
-          def resolve_process_identity
+          def resolve_process_identity(principal_id: UNSET, identity_id: UNSET, canonical_name: UNSET, **)
+            unless principal_id.equal?(UNSET)
+              return { principal_id:   principal_id,
+                       identity_id:    identity_id.equal?(UNSET) ? nil : identity_id,
+                       canonical_name: canonical_name.equal?(UNSET) ? nil : canonical_name }
+            end
             return { principal_id: nil, identity_id: nil, canonical_name: nil } unless defined?(Legion::Identity::Process)
 
             {

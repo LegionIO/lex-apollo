@@ -15,44 +15,77 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Request do
     described_class.instance_variable_set(:@knowledge_host, nil)
 
     embeddings_mod = Module.new do
-      def self.generate(*, **)
-        { vector: Array.new(1024, 0.1), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 }
+      def self.generate(task: :document, **)
+        ApolloSpecEmbedding.result(task: task)
       end
     end
     stub_const('Legion::LLM::Call::Embeddings', embeddings_mod)
   end
 
-  describe '.data_required?' do
-    it 'returns false' do
-      expect(described_class.data_required?).to be false
-    end
-  end
-
   describe '.query' do
     context 'when local service is available' do
-      let(:mock_entry_class) { double('ApolloEntry') }
-      let(:mock_access_log_class) { double('ApolloAccessLog') }
-      let(:mock_db) { double('db') }
-      let(:sample_entries) do
-        [{ id: 'uuid-1', content: 'test', content_type: 'fact',
-           confidence: 0.8, distance: 0.15, tags: ['ruby'], source_agent: 'agent-1' }]
-      end
+      let(:db) { Sequel.sqlite }
 
       before do
-        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
-        stub_const('Legion::Data::Model::ApolloAccessLog', mock_access_log_class)
-        allow(Legion::LLM::Call::Embeddings).to receive(:generate)
-          .and_return({ vector: Array.new(1024, 0.1), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
-        allow(mock_entry_class).to receive(:db).and_return(mock_db)
-        allow(mock_db).to receive(:fetch).and_return(double(all: sample_entries))
-        allow(mock_entry_class).to receive(:where).and_return(double(update: true))
-        allow(mock_access_log_class).to receive(:create)
+        db.create_table(:apollo_entries) do
+          primary_key :id
+          %i[content content_type source_agent tags knowledge_domain status access_scope embedding embedding_space_id embedding_provenance].each do |column|
+            String column
+          end
+          Integer :identity_principal_id
+          Integer :identity_id
+          Integer :embedding_dimensions
+          Integer :access_count, default: 0
+          Float :confidence
+          DateTime :created_at
+          DateTime :updated_at
+        end
+        db.create_table(:apollo_access_log) do
+          primary_key :id
+          Integer :entry_id
+          String :agent_id
+          String :action
+        end
+        db.create_table(:identities) do
+          primary_key :id
+          Integer :principal_id
+        end
+        db.create_table(:identity_group_memberships) do
+          Integer :principal_id
+          Integer :group_id
+        end
+        stub_const('Legion::Data::Model::Apollo::Entry', Class.new(Sequel::Model(db[:apollo_entries])))
+        stub_const('Legion::Data::Model::Apollo::AccessLog', Class.new(Sequel::Model(db[:apollo_access_log])))
       end
 
-      it 'delegates to Knowledge.handle_query' do
-        result = described_class.query(text: 'test query')
-        expect(result[:success]).to be true
-        expect(result[:entries]).to be_an(Array)
+      after { db.disconnect }
+
+      it 'applies query and retrieval filters to actual local rows and records the query reader' do
+        embedding = ApolloSpecEmbedding.result
+        base = {
+          content: 'eligible', content_type: 'fact', source_agent: 'writer', tags: '["vault","ruby"]',
+          knowledge_domain: 'security', status: 'candidate', access_scope: 'private', identity_principal_id: 41,
+          confidence: 0.8, embedding: Legion::JSON.dump(embedding[:vector]),
+          embedding_space_id: embedding[:embedding_provenance][:space_id], embedding_dimensions: 2,
+          embedding_provenance: Legion::JSON.dump(embedding[:embedding_provenance])
+        }
+        eligible = db[:apollo_entries].insert(base)
+        [{ identity_principal_id: 42 }, { knowledge_domain: 'other' }, { source_agent: 'other' },
+         { tags: '["vault"]' }, { status: 'confirmed' }, { confidence: 0.1 }].each do |excluded|
+          db[:apollo_entries].insert(base.merge(excluded))
+        end
+        filters = { status: ['candidate'], domain: 'security', requesting_principal_id: 41,
+                    tags: %w[vault ruby], tag_match: :all, exclude_source_agents: ['other'], min_confidence: 0.7 }
+        query = described_class.query(text: 'test query', agent_id: 'reader', **filters)
+        retrieval = described_class.retrieve(text: 'test query', **filters)
+
+        expect(query).to include(success: true)
+        expect(retrieval).to include(success: true)
+        expect(query[:entries].map { |entry| entry[:id] }).to eq([eligible])
+        expect(retrieval[:entries].map { |entry| entry[:id] }).to eq([eligible])
+        expect(db[:apollo_access_log].select(:entry_id, :agent_id, :action).all).to eq(
+          [{ entry_id: eligible, agent_id: 'reader', action: 'query' }]
+        )
       end
     end
 
@@ -64,17 +97,47 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Request do
           require 'json'
           Legion::Transport::Connection.setup
           channel = Legion::Transport::Connection.session.create_channel
-          Legion::Extensions::Apollo::Transport::Exchanges::Apollo.new('legion.apollo', channel: channel)
+          exchange = Legion::Extensions::Apollo::Transport::Exchanges::Apollo.new('legion.apollo', channel: channel)
           queries = []
           ingests = []
-          Legion::Transport::Local.subscribe('legion.apollo.query') { |payload| queries << Legion::JSON.load(payload) }
-          Legion::Transport::Local.subscribe('legion.apollo.ingest') { |payload| ingests << Legion::JSON.load(payload) }
+          query_queue = channel.queue_declare_without_recording_topology('apollo-query-spec')
+          ingest_queue = channel.queue_declare_without_recording_topology('apollo-ingest-spec')
+          query_queue.bind(exchange, routing_key: 'legion.apollo.query').subscribe do |_delivery, _properties, payload|
+            queries << Legion::JSON.load(payload)
+          end
+          ingest_queue.bind(exchange, routing_key: 'legion.apollo.ingest').subscribe do |_delivery, _properties, payload|
+            ingests << Legion::JSON.load(payload)
+          end
           request = Legion::Extensions::Apollo::Runners::Request
+          metadata = {
+            status: ['candidate'], domain: 'security', agent_id: 'reader', requesting_principal_id: 41,
+            tags: ['vault'], tag_match: 'all', exclude_source_agents: ['other'],
+            reply_to: 'request-replies', correlation_id: 'query-correlation'
+          }
+          provenance = {
+            source_agent: 'writer', source_provider: 'anthropic', source_channel: 'chat',
+            knowledge_domain: 'security', submitted_by: 'operator', submitted_from: 'terminal',
+            content_hash: 'digest', context: { request_id: 'request-1' }, access_scope: 'private',
+            identity_principal_id: 41, identity_id: nil, identity_canonical_name: 'operator@example.test',
+            embedding: [0.1, 0.2]
+          }
+          module Legion::Identity
+            module Process
+              def self.resolved? = false
+              def self.db_principal_id = 99
+              def self.db_identity_id = 101
+              def self.canonical_name = 'sender@example.test'
+            end
+          end
           results = [
-            request.query(text: 'remote query'),
-            request.retrieve(text: 'remote retrieval'),
-            request.traverse(entry_id: 'entry-1'),
-            request.ingest(content: 'remote fact', content_type: 'fact')
+            request.query(text: 'remote query', **metadata),
+            request.retrieve(text: 'remote retrieval', **metadata),
+            request.traverse(entry_id: 'entry-1', depth: 3, relation_types: ['supports'],
+                             agent_id: 'reader', requesting_principal_id: 41, reply_to: 'request-replies', correlation_id: 'graph-correlation'),
+            request.ingest(content: 'remote fact', content_type: 'fact', **provenance),
+            request.ingest(content: 'sender-owned fact', content_type: 'fact'),
+            request.ingest(content: 'anonymous fact', content_type: 'fact',
+                           identity_principal_id: nil, identity_id: nil, identity_canonical_name: nil)
           ]
           Legion::Transport::Connection.shutdown
           puts "APOLLO_RESULT=#{JSON.generate(results: results, queries: queries, ingests: ingests)}"
@@ -88,12 +151,25 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Request do
 
         state = Legion::JSON.load(line.delete_prefix('APOLLO_RESULT='))
         expect(state[:results]).to all(include(success: true, dispatched: 'transport'))
+        query_metadata = {
+          status: ['candidate'], domain: 'security', agent_id: 'reader', requesting_principal_id: 41,
+          tags: ['vault'], tag_match: 'all', exclude_source_agents: ['other'],
+          reply_to: 'request-replies', correlation_id: 'query-correlation'
+        }
         expect(state[:queries]).to contain_exactly(
-          include(action: 'query', query: 'remote query'),
-          include(action: 'query', query: 'remote retrieval'),
-          include(action: 'traverse', entry_id: 'entry-1')
+          include(action: 'query', query: 'remote query', **query_metadata),
+          include(action: 'retrieve', query: 'remote retrieval', **query_metadata),
+          include(action: 'traverse', entry_id: 'entry-1', depth: 3, relation_types: ['supports'],
+                  agent_id: 'reader', requesting_principal_id: 41, reply_to: 'request-replies', correlation_id: 'graph-correlation')
         )
-        expect(state[:ingests]).to contain_exactly(include(content: 'remote fact', content_type: 'fact'))
+        expect(state[:ingests]).to contain_exactly(
+          include(content: 'remote fact', content_type: 'fact', source_agent: 'writer', source_provider: 'anthropic',
+                  source_channel: 'chat', knowledge_domain: 'security', submitted_by: 'operator', submitted_from: 'terminal',
+                  content_hash: 'digest', context: { request_id: 'request-1' }, access_scope: 'private',
+                  identity_principal_id: 41, identity_id: nil, identity_canonical_name: 'operator@example.test', embedding: [0.1, 0.2]),
+          include(content: 'sender-owned fact', identity_principal_id: 99, identity_id: 101, identity_canonical_name: 'sender@example.test'),
+          include(content: 'anonymous fact', identity_principal_id: nil, identity_id: nil, identity_canonical_name: nil)
+        )
       end
     end
 
@@ -112,26 +188,6 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Request do
   end
 
   describe '.retrieve' do
-    context 'when local service is available' do
-      let(:mock_entry_class) { double('ApolloEntry') }
-      let(:mock_db) { double('db') }
-
-      before do
-        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
-        allow(Legion::LLM::Call::Embeddings).to receive(:generate)
-          .and_return({ vector: Array.new(1024, 0.1), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
-        allow(mock_entry_class).to receive(:db).and_return(mock_db)
-        allow(mock_db).to receive(:fetch).and_return(double(all: []))
-        allow(mock_entry_class).to receive(:where).and_return(double(update: true))
-      end
-
-      it 'delegates to Knowledge.retrieve_relevant' do
-        result = described_class.retrieve(text: 'test query')
-        expect(result[:success]).to be true
-        expect(result[:entries]).to eq([])
-      end
-    end
-
     context 'when neither path is available' do
       before do
         hide_const('Legion::Data::Model::ApolloEntry') if defined?(Legion::Data::Model::ApolloEntry)
@@ -147,37 +203,6 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Request do
   end
 
   describe '.ingest' do
-    context 'when local service is available' do
-      let(:mock_entry_class) { double('ApolloEntry') }
-      let(:mock_expertise_class) { double('ApolloExpertise') }
-      let(:mock_access_log_class) { double('ApolloAccessLog') }
-      let(:mock_entry) { double('entry', id: 'uuid-123', embedding: nil) }
-      let(:mock_db) { double('db') }
-      before do
-        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
-        stub_const('Legion::Data::Model::ApolloExpertise', mock_expertise_class)
-        stub_const('Legion::Data::Model::ApolloAccessLog', mock_access_log_class)
-        allow(Legion::LLM::Call::Embeddings).to receive(:generate)
-          .and_return({ vector: Array.new(1024, 0.1), model: 'test', provider: :ollama, dimensions: 1024, tokens: 0 })
-        allow(mock_entry_class).to receive(:where).and_return(double(exclude: double(limit: double(each: nil), first: nil)))
-        allow(mock_entry_class).to receive(:exclude)
-          .and_return(double(exclude: double(limit: double(all: []))))
-        allow(mock_entry_class).to receive(:db).and_return(mock_db)
-        allow(mock_db).to receive(:fetch).and_return(double(all: []))
-        allow(mock_db).to receive(:transaction) { |**_options, &block| block.call }
-        allow(mock_entry_class).to receive(:create).and_return(mock_entry)
-        allow(mock_expertise_class).to receive(:where).and_return(double(first: nil))
-        allow(mock_expertise_class).to receive(:create)
-        allow(mock_access_log_class).to receive(:create)
-      end
-
-      it 'delegates to Knowledge.handle_ingest' do
-        result = described_class.ingest(content: 'test fact', content_type: 'fact', source_agent: 'agent-1')
-        expect(result[:success]).to be true
-        expect(result[:entry_id]).to eq('uuid-123')
-      end
-    end
-
     context 'when neither path is available' do
       before do
         hide_const('Legion::Data::Model::ApolloEntry') if defined?(Legion::Data::Model::ApolloEntry)

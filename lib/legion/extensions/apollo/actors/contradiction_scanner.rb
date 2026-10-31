@@ -17,8 +17,8 @@ module Legion
           class << self
             attr_reader :queue, :mutex
 
-            def enqueue(entry_id:, embedding:, content:)
-              queue.push({ entry_id: entry_id, embedding: embedding, content: content })
+            def enqueue(entry_id:, **)
+              queue.push({ entry_id: entry_id })
             end
 
             def pending_count
@@ -46,7 +46,7 @@ module Legion
             processed = 0
             failed = 0
             items.each do |item|
-              runner.send(:detect_contradictions, item[:entry_id], item[:embedding], item[:content])
+              runner.send(:detect_contradictions, **item)
               processed += 1
             rescue StandardError => e
               self.class.enqueue(**item)

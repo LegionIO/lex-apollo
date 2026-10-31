@@ -18,19 +18,19 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Gas do
     end
 
     it 'skips when audit event has no content' do
-      result = described_class.process({ request_id: 'req_abc' })
+      result = described_class.process(request_id: 'req_abc')
       expect(result[:phases_completed]).to eq(0)
     end
 
     it 'skips when response_content is nil' do
-      result = described_class.process({ request_id: 'req_abc', messages: [{ role: :user, content: 'hi' }] })
+      result = described_class.process(request_id: 'req_abc', messages: [{ role: :user, content: 'hi' }])
       expect(result[:phases_completed]).to eq(0)
     end
 
     it 'returns error details on failure' do
       allow(described_class).to receive(:phase_comprehend).and_raise(StandardError, 'boom')
 
-      result = described_class.process(audit_event)
+      result = described_class.process(**audit_event)
       expect(result[:phases_completed]).to eq(0)
       expect(result[:error]).to eq('boom')
     end
@@ -70,23 +70,24 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Gas do
   describe '.phase_deposit' do
     it 'reports unavailable writes as failures rather than successful deposits' do
       hide_const('Legion::Extensions::Apollo::Runners::Knowledge')
-      result = described_class.phase_deposit([{ content: 'fact' }], [], [{ to_id: 'target' }],
-                                             [{ content: 'synthesis' }], { request_id: 'req_1' })
+      result = described_class.phase_deposit(facts: [{ content: 'fact' }], relations: [{ to_id: 'target' }],
+                                             synthesis: [{ content: 'synthesis' }], audit_event: { request_id: 'req_1' })
 
       expect(result).to include(deposited: 0, failed: 2, relations: 0, relations_failed: 1)
     end
 
     it 'counts only successful fact and synthesis writes with an entry ID' do
-      knowledge = double('Knowledge')
-      stub_const('Legion::Extensions::Apollo::Runners::Knowledge', knowledge)
-      allow(knowledge).to receive(:handle_ingest) do |content:, **|
-        case content
-        when 'stored fact' then { success: true, entry_id: 41 }
-        when 'stored synthesis' then { success: true, entry_id: 42 }
-        when 'missing ID' then { success: true }
-        else { success: false, error: 'write failed' }
+      knowledge = Module.new do
+        def handle_ingest(content:, **)
+          case content
+          when 'stored fact' then { success: true, entry_id: 41 }
+          when 'stored synthesis' then { success: true, entry_id: 42 }
+          when 'missing ID' then { success: true }
+          else { success: false, error: 'write failed' }
+          end
         end
       end
+      stub_const('Legion::Extensions::Apollo::Runners::Knowledge', knowledge)
       facts = [{ content: 'stored fact', content_type: :fact }, { content: 'failed fact', content_type: :fact }]
       synthesis = [
         { content: 'stored synthesis', content_type: :inference, source_indices: [0] },
@@ -94,7 +95,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Gas do
         { content: 'missing ID', content_type: :connection, source_indices: [0] }
       ]
 
-      result = described_class.phase_deposit(facts, [], [], synthesis, { request_id: 'req_1' })
+      result = described_class.phase_deposit(facts: facts, relations: [], synthesis: synthesis, audit_event: { request_id: 'req_1' })
 
       expect(result).to include(deposited: 2, failed: 3, facts: 1, synthesis: 1, relations: 0)
     end

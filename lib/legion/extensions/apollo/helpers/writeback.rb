@@ -2,6 +2,7 @@
 
 require 'digest'
 require 'socket'
+require_relative '../runners/writeback'
 
 module Legion
   module Extensions
@@ -17,81 +18,59 @@ module Legion
 
           module_function
 
-          def evaluate_and_route(request:, response:, enrichments: {})
+          def evaluate_and_route(request:, response:, enrichments: {}, **)
             return unless writeback_enabled?
-            return unless should_capture?(request, response, enrichments)
+            return unless should_capture?(response: response, enrichments: enrichments)
 
             payload = build_payload(request: request, response: response)
-            route_payload(payload)
+            route_payload(payload: payload)
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'apollo.writeback.evaluate_and_route')
+            raise
           end
 
-          def should_capture?(_request, response, enrichments)
-            content = response_content(response)
+          def should_capture?(response:, enrichments:, **)
+            content = response_content(response: response)
             return false if content.nil? || content.length < min_content_length
 
-            extract_tool_calls(response, enrichments).any? do |call|
+            extract_tool_calls(response: response, enrichments: enrichments).any? do |call|
               name = call.respond_to?(:name) ? call.name : call[:name] || call['name']
               RESEARCH_TOOLS.include?(name)
             end
           end
 
-          def build_payload(request:, response:, source_channel: nil)
-            content = response_content(response)
-            caller_identity = extract_identity(request)
-            user_query = extract_user_query(request)
-            tags = derive_tags(user_query)
+          def build_payload(request:, response:, source_channel: nil, **)
+            content = response_content(response: response)[0...MAX_CONTENT_LENGTH]
+            caller_identity = extract_identity(request: request)
+            user_query = extract_user_query(request: request)
+            tags = derive_tags(query: user_query)
+            metadata = request.respond_to?(:metadata) && request.metadata.is_a?(Hash) ? request.metadata : {}
+            producer = metadata.slice(:context, :access_scope, :identity_principal_id, :identity_id, :identity_canonical_name,
+                                      :source_agent, :source_provider, :source_model, :source_channel, :knowledge_domain)
 
             {
-              content:          content[0...MAX_CONTENT_LENGTH],
-              content_type:     'observation',
-              tags:             Helpers::TagNormalizer.normalize_all(tags),
-              source_agent:     response.respond_to?(:model) ? response.model : 'unknown',
-              source_channel:   "#{source_channel || 'pipeline'}_synthesis",
-              submitted_by:     caller_identity,
-              submitted_from:   Socket.gethostname,
-              knowledge_domain: nil,
-              content_hash:     content_hash(content)
-            }
+              content:               content,
+              content_type:          'observation',
+              tags:                  Legion::Extensions::Apollo::Helpers::TagNormalizer.normalize_all(tags),
+              source_agent:          response.respond_to?(:model) ? response.model : 'unknown',
+              source_model:          response.respond_to?(:model) ? response.model : nil,
+              source_provider:       response.respond_to?(:provider) ? response.provider : nil,
+              context:               {},
+              identity_principal_id: nil,
+              source_channel:        "#{source_channel || 'pipeline'}_synthesis",
+              submitted_by:          caller_identity,
+              submitted_from:        Socket.gethostname,
+              knowledge_domain:      nil,
+              content_hash:          content_hash(content: content)
+            }.merge(producer)
           end
 
-          def route_payload(payload)
-            can_embed = Helpers::Capability.can_embed?
-            can_write = Helpers::Capability.can_write?
-
-            if can_embed
-              result = Legion::LLM::Call::Embeddings.generate(text: payload[:content])
-              vector = result.is_a?(Hash) ? result[:vector] : result
-              payload[:embedding] = vector.is_a?(Array) && vector.any? ? vector : Array.new(1024, 0.0)
-            end
-
-            if can_write && can_embed
-              write_directly(payload)
+          def route_payload(payload:, **)
+            if Legion::Extensions::Apollo::Helpers::Capability.can_embed?
+              Legion::Extensions::Apollo::Runners::Writeback.handle_vectorize(**payload)
             else
-              publish_to_transport(payload, has_embedding: can_embed)
+              Legion::Extensions::Apollo::Runners::Writeback.writeback_deliver(payload: payload, has_embedding: false)
             end
-          end
-
-          def write_directly(payload)
-            if defined?(Legion::Apollo)
-              Legion::Apollo.ingest(**payload)
-            else
-              Runners::Knowledge.handle_ingest(**payload)
-            end
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'apollo.writeback.write_directly')
-            publish_to_transport(payload, has_embedding: !payload[:embedding].nil?)
-          end
-
-          def publish_to_transport(payload, has_embedding: false)
-            return unless Legion.const_defined?(:Transport, false)
-
-            Transport::Messages::Writeback.new(
-              **payload, has_embedding: has_embedding
-            ).publish
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'apollo.writeback.publish_to_transport')
           end
 
           def writeback_enabled?
@@ -108,19 +87,19 @@ module Legion
             MIN_CONTENT_LENGTH
           end
 
-          def content_hash(content)
+          def content_hash(content:, **)
             normalized = content.to_s.strip.downcase.gsub(/\s+/, ' ')
             Digest::MD5.hexdigest(normalized)
           end
 
-          def response_content(response)
+          def response_content(response:, **)
             msg = response.respond_to?(:message) ? response.message : nil
             return nil unless msg.is_a?(Hash)
 
             msg[:content] || msg['content']
           end
 
-          def extract_identity(request)
+          def extract_identity(request:, **)
             return 'unknown' unless request.respond_to?(:caller) && request.caller.is_a?(Hash)
 
             request.caller.dig(:requested_by, :identity) || 'unknown'
@@ -129,7 +108,7 @@ module Legion
             'unknown'
           end
 
-          def extract_user_query(request)
+          def extract_user_query(request:, **)
             return '' unless request.respond_to?(:messages)
 
             user_msgs = Array(request.messages).select { |m| m[:role] == 'user' || m['role'] == 'user' }
@@ -139,7 +118,7 @@ module Legion
             ''
           end
 
-          def extract_tool_calls(response, enrichments)
+          def extract_tool_calls(response:, enrichments:, **)
             calls = []
             calls.concat(Array(response.tools)) if response.respond_to?(:tools)
             calls.concat(Array(response.tool_calls)) if response.respond_to?(:tool_calls)
@@ -148,7 +127,7 @@ module Legion
             calls
           end
 
-          def derive_tags(query)
+          def derive_tags(query:, **)
             stop_words = %w[a an the is are was were be been being have has had do does did will would shall
                             should may might can could of in to for on with at by from as into about between
                             how what when where why who which this that these those it its and or but not]

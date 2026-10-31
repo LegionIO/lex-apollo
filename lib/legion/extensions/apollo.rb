@@ -6,17 +6,21 @@ require 'legion/json'
 require 'legion/extensions/apollo/version'
 require 'legion/extensions/apollo/helpers/confidence'
 require 'legion/extensions/apollo/helpers/similarity'
+require 'legion/extensions/apollo/helpers/embedding'
+require 'legion/extensions/apollo/helpers/storage'
 require 'legion/extensions/apollo/helpers/graph_query'
 require 'legion/extensions/apollo/helpers/tag_normalizer'
 require 'legion/extensions/apollo/helpers/capability'
 require 'legion/extensions/apollo/helpers/writeback'
 require 'legion/extensions/apollo/helpers/data_models'
 require 'legion/extensions/apollo/runners/knowledge'
+require 'legion/extensions/apollo/runners/writeback'
 require 'legion/extensions/apollo/runners/expertise'
 require 'legion/extensions/apollo/runners/maintenance'
 require 'legion/extensions/apollo/runners/entity_extractor'
 require 'legion/extensions/apollo/runners/gas'
 require 'legion/extensions/apollo/runners/request'
+require 'legion/extensions/apollo/runners/query_response'
 
 require 'legion/extensions/apollo/api' if defined?(Sinatra)
 
@@ -44,7 +48,7 @@ module Legion
         false
       end
 
-      def self.default_settings # rubocop:disable Metrics/MethodLength
+      def self.default_settings(**) # rubocop:disable Metrics/MethodLength
         {
           confidence:          {
             initial:                  0.5,
@@ -114,10 +118,6 @@ module Legion
             'claims_optimization' => ['claims_optimization'],
             'clinical_care'       => %w[clinical_care general],
             'general'             => :all
-          },
-          embedding:           {
-            provider: nil,
-            model:    nil
           },
           data:                {
             apollo_write: false

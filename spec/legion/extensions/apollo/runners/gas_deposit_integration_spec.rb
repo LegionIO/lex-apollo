@@ -18,13 +18,24 @@ RSpec.describe 'Apollo GAS relation persistence' do
       db.create_table(:apollo_entries) do
         primary_key :id
         String :content
-        String :content_hash, unique: true
+        String :content_hash
         String :content_type
         String :status
         String :access_scope
         Integer :identity_principal_id
         Float :confidence
+        String :embedding
+        String :embedding_space_id
+        Integer :embedding_dimensions
+        String :embedding_provenance
+        DateTime :updated_at
       end
+      db.run <<~SQL
+        CREATE UNIQUE INDEX idx_apollo_content_hash_owner ON apollo_entries (
+          content_hash, access_scope,
+          (CASE WHEN access_scope = 'global' THEN 0 ELSE COALESCE(identity_principal_id, 0) END)
+        ) WHERE status != 'archived' AND content_hash IS NOT NULL
+      SQL
       db.create_table(:apollo_relations) do
         primary_key :id
         foreign_key :from_entry_id, :apollo_entries, null: false
@@ -44,18 +55,22 @@ RSpec.describe 'Apollo GAS relation persistence' do
       end
       input = ::JSON.parse($stdin.read, symbolize_names: true)
       input[:entries].each do |entry|
-        db[:apollo_entries].insert(entry.merge(content_hash: Legion::Extensions::Apollo::Helpers::Writeback.content_hash(entry[:content])))
+        embedding = ApolloSpecEmbedding.result
+        db[:apollo_entries].insert(entry.merge(
+          content_hash: Legion::Extensions::Apollo::Helpers::Writeback.content_hash(content: entry[:content]),
+          embedding: ::JSON.generate(embedding[:vector]), embedding_dimensions: embedding[:dimensions],
+          embedding_space_id: embedding[:embedding_provenance][:space_id],
+          embedding_provenance: ::JSON.generate(embedding[:embedding_provenance])
+        ))
       end
-      knowledge = Legion::Extensions::Apollo::Runners::Knowledge
-      knowledge.extend(knowledge)
       result = Legion::Extensions::Apollo::Runners::Gas.phase_deposit(
-        input[:facts], [], input[:relations], [], { request_id: 'gas-regression' }
+        facts: input[:facts], relations: input[:relations], synthesis: [], audit_event: { request_id: 'gas-regression' }
       )
       puts "APOLLO_RESULT=#{::JSON.generate(result: result, relations: db[:apollo_relations].all)}"
     RUBY
   end
 
-  def gas_deposit_state(entries:, facts:, relations:)
+  def gas_deposit_state(entries:, facts:, relations:, **)
     stdout, stderr, status = Open3.capture3(
       RbConfig.ruby, '-Ilib', '-Ispec', '-e', deposit_script,
       chdir:      File.expand_path('../../../../..', __dir__),

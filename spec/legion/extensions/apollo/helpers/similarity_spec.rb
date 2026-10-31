@@ -27,6 +27,17 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Similarity do
       vec_b = [1.0, 1.0]
       expect(described_class.cosine_similarity(vec_a: vec_a, vec_b: vec_b)).to eq(0.0)
     end
+
+    it 'returns no match for malformed or unequal persisted vectors' do
+      [nil, '', '{bad json', '[1,\"bad\"]', [1.0], [], [Float::NAN, 1.0], [Complex(1, 1), 1.0]].each do |invalid|
+        expect(described_class.cosine_similarity(vec_a: invalid, vec_b: [1.0, 2.0])).to eq(0.0)
+      end
+    end
+
+    it 'compares JSON vectors and avoids overflowing large finite components' do
+      expect(described_class.cosine_similarity(vec_a: '[1.0,2.0]', vec_b: [1.0, 2.0])).to be_within(0.001).of(1.0)
+      expect(described_class.cosine_similarity(vec_a: [1e300, 1e300], vec_b: [1e300, 1e300])).to be_within(0.001).of(1.0)
+    end
   end
 
   describe '.above_corroboration_threshold?' do

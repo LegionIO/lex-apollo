@@ -41,6 +41,23 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Capability do
       allow(Legion::Data).to receive(:connected?).and_return(false) if defined?(Legion::Data)
       expect(described_class.can_write?).to be false
     end
+
+    it 'allows an adapter-approved SQLite writer without issuing PostgreSQL privilege SQL' do
+      described_class.settings[:data][:apollo_write] = true
+      allow(Legion::Data).to receive(:connected?).and_return(true)
+      allow(Legion::Data).to receive(:can_write?).with(:apollo_entries).and_return(true)
+      expect(Legion::Data).not_to receive(:connection)
+
+      expect(described_class.can_write?).to be true
+    end
+
+    it 'does not advertise writes when the data capability denies them' do
+      described_class.settings[:data][:apollo_write] = true
+      allow(Legion::Data).to receive(:connected?).and_return(true)
+      allow(Legion::Data).to receive(:can_write?).with(:apollo_entries).and_return(false)
+
+      expect(described_class.can_write?).to be false
+    end
   end
 
   describe '.apollo_write_enabled?' do
