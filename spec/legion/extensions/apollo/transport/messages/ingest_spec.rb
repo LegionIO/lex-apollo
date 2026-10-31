@@ -17,7 +17,7 @@ RSpec.describe Legion::Extensions::Apollo::Transport::Messages::Ingest do
     message = described_class.new(**payload, encrypt: false)
 
     expect(Legion::JSON.load(message.encode_message)).to eq(payload)
-    expect(message.publish_envelope_options(payload)).to include(
+    expect(message.publish_envelope_options(options: payload)).to include(
       routing_key: 'legion.apollo.ingest', content_type: 'application/json', reply_to: 'reply-queue', correlation_id: 'ingest-123'
     )
   end

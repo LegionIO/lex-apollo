@@ -100,8 +100,10 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Request do
           Legion::Extensions::Apollo::Transport::Exchanges::Apollo.new('legion.apollo', channel: channel)
           queries = []
           ingests = []
-          Legion::Transport::Local.subscribe('legion.apollo.query') { |payload| queries << Legion::JSON.load(payload) }
-          Legion::Transport::Local.subscribe('legion.apollo.ingest') { |payload| ingests << Legion::JSON.load(payload) }
+          query_queue = Legion::Transport::CONNECTOR::Queue.new(channel, 'apollo-query-smoke').bind('legion.apollo', routing_key: 'legion.apollo.query')
+          ingest_queue = Legion::Transport::CONNECTOR::Queue.new(channel, 'apollo-ingest-smoke').bind('legion.apollo', routing_key: 'legion.apollo.ingest')
+          query_queue.subscribe(manual_ack: false) { |_delivery, _properties, payload| queries << Legion::JSON.load(payload) }
+          ingest_queue.subscribe(manual_ack: false) { |_delivery, _properties, payload| ingests << Legion::JSON.load(payload) }
           request = Legion::Extensions::Apollo::Runners::Request
           metadata = {
             status: ['candidate'], domain: 'security', agent_id: 'reader', requesting_principal_id: 41,

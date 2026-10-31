@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'legion/crypt'
+require 'open3'
 
 require 'legion/extensions/apollo/transport/exchanges/apollo'
 require 'legion/extensions/apollo/transport/messages/writeback'
@@ -37,14 +39,14 @@ RSpec.describe Legion::Extensions::Apollo::Transport::Messages::Writeback do
         message = described_class.new(**options)
 
         expect(Legion::JSON.load(message.encode_message)).to include(base_opts.merge(metadata))
-        expect(message.publish_envelope_options(options)).to include(content_type: 'application/json')
+        expect(message.publish_envelope_options(options: options)).to include(content_type: 'application/json')
       end
     end
   end
 
   describe '#publish' do
     let(:channel) { double('channel', using_publisher_confirmations?: false, confirm_select: true, wait_for_confirms: true, open?: true, close: true) }
-    let(:exchange) { double('exchange', channel: channel) }
+    let(:exchange) { double('exchange', name: 'legion.apollo', channel: channel) }
     let(:publications) { [] }
     let(:message) { described_class.new(**base_opts, encrypt: false, correlation_id: 'request-123') }
     let(:return_state) { {} }
@@ -64,27 +66,29 @@ RSpec.describe Legion::Extensions::Apollo::Transport::Messages::Writeback do
                                   correlation_id: 'request-123', message_id: result[:message_id])
     end
 
-    it 'retains inherited encryption and IV headers instead of publishing raw JSON' do
+    it 'publishes ciphertext that decrypts with the emitted IV' do
       encrypted = described_class.new(**base_opts, encrypt: true)
-      allow(Legion::Settings[:crypt]).to receive(:[]).with(:cs_encrypt_ready).and_return(true)
-      allow(Legion::Crypt).to receive(:encrypt).and_return(enciphered_message: 'opaque-ciphertext', iv: 'cipher-iv')
+      allow(Legion::Settings).to receive(:dig).and_call_original
+      allow(Legion::Settings).to receive(:dig).with(:crypt, :cs_encrypt_ready).and_return(true)
+      allow(Legion::Crypt).to receive(:cs).and_return('a' * 32)
       encrypted.publish
       body, envelope = publications.fetch(0)
-      expect(body).to eq('opaque-ciphertext')
       expect(envelope).to include(content_encoding: 'encrypted/cs')
-      expect(envelope[:headers]).to include(iv: 'cipher-iv')
+      plaintext = Legion::Crypt.decrypt(body, envelope[:headers][:iv])
+      expect(Legion::JSON.load(plaintext)).to include(base_opts)
     end
 
     it 'raises on mandatory returns even when the broker confirms receipt' do
       allow(exchange).to receive(:publish) do |_body, **envelope|
-        return_state[:callback].call(nil, double(message_id: envelope[:message_id]), nil)
+        return_info = double(reply_code: 312, reply_text: 'NO_ROUTE')
+        return_state[:callback].call(return_info, double(headers: envelope[:headers]), nil)
       end
       expect { message.publish }.to raise_error(IOError)
     end
 
     it 'does not mistake another publication return for this message' do
       allow(exchange).to receive(:publish) do
-        return_state[:callback].call(nil, double(message_id: 'another-message'), nil)
+        return_state[:callback].call(nil, double(headers: {}), nil)
       end
       expect(message.publish[:accepted]).to be true
     end
@@ -108,6 +112,41 @@ RSpec.describe Legion::Extensions::Apollo::Transport::Messages::Writeback do
       allow(exchange).to receive(:publish).and_raise(IOError, 'disconnected')
       expect { message.publish }.to raise_error(IOError, 'disconnected')
     end
+  end
+
+  it 'delivers confirmed writeback through real in-process transport without a database' do
+    script = <<~'RUBY'
+      require 'bundler/setup'
+      require 'legion/transport'
+      require 'legion/extensions/apollo/transport/exchanges/apollo'
+      require 'legion/extensions/apollo/transport/messages/writeback'
+      Legion::Transport::Connection.setup
+      channel = Legion::Transport::Connection.session.create_channel
+      queue = Legion::Transport::CONNECTOR::Queue.new(channel, 'writeback-smoke')
+      queue.bind('legion.apollo', routing_key: 'legion.apollo.writeback.store')
+      deliveries = []
+      queue.subscribe(manual_ack: false) do |_delivery, _properties, payload|
+        deliveries << Legion::JSON.load(payload)
+      end
+      result = Legion::Extensions::Apollo::Transport::Messages::Writeback.new(
+        content: 'local fact', content_type: 'fact', has_embedding: true,
+        embedding: [0.6, 0.8], identity_principal_id: 41, encrypt: false
+      ).publish
+      Legion::Transport::Connection.shutdown
+      puts "APOLLO_RESULT=#{Legion::JSON.dump({ result: result, deliveries: deliveries })}"
+    RUBY
+    stdout, stderr, status = Open3.capture3(
+      { 'LEGION_MODE' => 'lite' }, RbConfig.ruby, '-Ilib', '-e', script,
+      chdir: File.expand_path('../../../../../..', __dir__)
+    )
+    line = stdout.lines.find { |output| output.start_with?('APOLLO_RESULT=') }
+    raise "Writeback process failed: #{stderr}\n#{stdout}" unless status.success? && line
+
+    state = Legion::JSON.load(line.delete_prefix('APOLLO_RESULT='))
+    expect(state[:result]).to include(accepted: true, status: 'accepted')
+    expect(state[:deliveries]).to contain_exactly(
+      include(content: 'local fact', content_type: 'fact', embedding: [0.6, 0.8], identity_principal_id: 41)
+    )
   end
 
   describe '#validate' do

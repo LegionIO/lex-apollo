@@ -112,11 +112,11 @@ HTTP reads and deprecation derive the database principal from authenticated `leg
 
 Broker producers are trusted to supply database principal IDs. Missing or null request principals mean global-only visibility, and missing ingestion ownership stays null rather than becoming the receiving service's identity. Producer scope, identity, provenance, context, and supplied embeddings survive ingestion and writeback-store decoding. Direct internal Knowledge calls retain their existing nil-principal/process-identity semantics.
 
-Traversal checks the seed and every hop: inaccessible and archived nodes cannot bridge into visible results. Mesh export includes only global confirmed entries. Migration 137 scopes active content-hash uniqueness to access scope and private/team owner; identical content may belong to different owners without rewriting its hash. Global entries share one global hash boundary. Archived copies are excluded from uniqueness.
+Traversal checks the seed and every hop: inaccessible and archived nodes cannot bridge into visible results. Mesh export includes only global confirmed entries. Migration 139 scopes active content-hash uniqueness to access scope and private/team owner; identical content may belong to different owners without rewriting its hash. Global entries share one global hash boundary. Archived copies are excluded from uniqueness.
 
 ### Embedding Compatibility and Migration
 
-Deploy `legion-data >= 1.10.18` and `legion-llm >= 0.16.10`, then apply data migration 137 before starting this service version. Existing active/archive content, hashes, IDs, owners, and vectors are preserved. SQLite gains JSON-text vectors/provenance; PostgreSQL vectors become unconstrained in dimension. Legacy model provenance is deliberately left unknown, not inferred from the old column size. The migration is irreversible because restoring global uniqueness or one fixed dimension could destroy valid data.
+Deploy `legion-data >= 1.10.29` and `legion-llm >= 0.16.10`, then apply data migration 139 before starting this service version. Existing active/archive content, hashes, IDs, owners, and vectors are preserved. SQLite gains JSON-text vectors/provenance; PostgreSQL vectors become unconstrained in dimension. Legacy model provenance is deliberately left unknown, not inferred from the old column size. The migration is irreversible because restoring global uniqueness or one fixed dimension could destroy valid data.
 
 Every usable vector carries `embedding_provenance`: routed provider/model, authoritative revision (or exact instance when no revision is known), actual dimensions, document/query prefix pair, normalization, task, and stable `space_id`. Search uses query vectors; stored vectors must be document vectors. Only compatible profiles participate in similarity, corroboration, or contradiction checks, even when two unrelated models return the same dimension. Invalid, zero, or unknown-profile vectors cannot silently enter comparisons.
 
@@ -198,12 +198,12 @@ See `helpers/confidence.rb` for all constants and math helpers.
 
 ### Client mode
 - Ruby >= 3.4
-- RabbitMQ (via `legion-transport >= 1.4.23`)
+- RabbitMQ (via `legion-transport >= 1.4.31`)
 
 ### Service mode
 - PostgreSQL with pgvector (including `vector_norm`) or SQLite with JSON and window-function support
 - RabbitMQ
-- `legion-data >= 1.10.18`, with migration 137 applied
+- `legion-data >= 1.10.29`, with migration 139 applied
 - `legion-llm >= 0.16.10`, with an available routed embedding provider
 
 ## Development

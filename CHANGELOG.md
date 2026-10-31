@@ -9,6 +9,7 @@
 - Add `tag_match: :all` for conjunctive conversation tags while retaining default `:any`; apply confidence and source-agent exclusions to semantic queries, retrieval, and browse fallback.
 - Dispatch canonical `legion.apollo` query/retrieve/traverse requests to the correct handlers and publish correlated, confirmed RabbitMQ replies. Preserve reply routing across retries and propagate unroutable, rejected, or timed-out publications.
 - Preserve request filters, source metadata, and supplied embeddings on the wire; keep domain `content_type` in the JSON body without overriding the AMQP JSON content type.
+- Use the released transport keyword envelope callback and reliable publisher for ingest/writeback. Preserve encrypted wire payloads and IV metadata, reject unaccepted publication without spooling, and support the in-process transport without database access.
 - Request query embeddings for search and document embeddings for ingestion.
 - Repair the writeback vectorizer's actual subscription receiver, reject failed generation/ingestion/publication, preserve source context and embedding provenance, and discard inbound routing metadata before forwarding to the store queue. Mandatory returns and bounded publisher confirms reach retry handling.
 - Support SQLite JSON vectors/tags/provenance and native PostgreSQL vectors with portable traversal and SQLite decay; keep native entry IDs and matching query filters on both backends.
@@ -19,9 +20,9 @@
 - Add bounded `Maintenance.reembed_entries` for legacy backfill and model/dimension migration, with resumable cursors, truthful partial failures, and unchanged content/hash/ownership/status.
 
 ### Changed
-- Require `legion-transport >= 1.4.23` for envelope and per-publication options.
+- Require `legion-transport >= 1.4.31` for the current envelope, encryption-readiness, and exchange-scoped local transport contracts.
 - Use keyword-only arguments for Apollo-owned methods changed in this release and discard unused keywords with `**`; preserve required positional framework callbacks while dropping extra keywords before superclass dispatch.
-- Require `legion-data >= 1.10.18` (migration 137) and `legion-llm >= 0.16.10` for ownership-scoped hash uniqueness and durable embedding provenance. The original content hash remains unchanged.
+- Require `legion-data >= 1.10.29` (migration 139, following the merged reliability migrations 137–138) and `legion-llm >= 0.16.10` for ownership-scoped hash uniqueness and durable embedding provenance. The original content hash remains unchanged.
 - Embedding routing remains solely owned by `legion-llm`; remove obsolete Apollo provider/model settings. Core-client legacy wire migration and synchronous remote retrieval remain outside this server release.
 
 ## [0.4.44] - 2026-10-30

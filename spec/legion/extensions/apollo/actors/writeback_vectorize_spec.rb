@@ -66,8 +66,8 @@ RSpec.describe Legion::Extensions::Apollo::Actor::WritebackVectorize do
 
   it 'publishes vectorized broker input to storage instead of inheriting its inbound route' do
     allow(Legion::Extensions::Apollo::Helpers::Capability).to receive(:can_write?).and_return(false)
-    channel = double('channel', using_publisher_confirmations?: true, wait_for_confirms: true)
-    exchange = double('exchange', channel: channel, on_return: nil)
+    channel = double('channel', using_publisher_confirmations?: true, confirm_select: true, wait_for_confirms: true)
+    exchange = double('exchange', name: 'legion.apollo', channel: channel, on_return: nil)
     allow(Legion::Extensions::Apollo::Transport::Exchanges::Apollo).to receive(:cached_instance).and_return(exchange)
     published = nil
     allow(exchange).to receive(:publish) { |body, **envelope| published = [Legion::JSON.load(body), envelope] }

@@ -32,65 +32,35 @@ module Legion
               )
             end
 
-            def publish_envelope_options(options, **)
-              super(options.except(:content_type))
+            def publish_envelope_options(options:, **)
+              super(options: options.except(:content_type))
             end
 
             def publish(options = nil, **)
               raise ArgumentError, 'Invalid Apollo writeback message' unless @valid
 
-              original_options = @options
-              @options = @options.merge(options || {}).merge(message_id: SecureRandom.uuid, mandatory: true)
-              timeout_ms = @options.fetch(:publish_confirm_timeout_ms, 5000)
+              publication = options || {}
+              timeout_ms = publication.fetch(:publish_confirm_timeout_ms) { @options.fetch(:publish_confirm_timeout_ms, 5000) }
               unless timeout_ms.is_a?(Numeric) && timeout_ms.real? && timeout_ms.finite? && timeout_ms.positive?
                 raise ArgumentError, 'publish_confirm_timeout_ms must be finite and positive'
               end
 
-              payload = encode_message
-              if payload.bytesize > self.class.max_payload_bytes
-                raise Legion::Transport::PayloadTooLarge, 'Apollo writeback exceeds the transport payload limit'
-              end
+              result = super(publication.merge(message_id: SecureRandom.uuid, mandatory: true,
+                                               publisher_confirm: true, spool: false, return_result: true))
+              return result if result[:accepted] == true
 
-              envelope = publish_envelope_options(@options)
-              expected_message_id = @options[:message_id]
-              returned = false
-              confirm_channel = nil
-              confirmed = Timeout.timeout(timeout_ms / 1000.0) do
-                destination = exchange.cached_instance || exchange.new
-                confirm_channel = destination.channel
-                destination.on_return do |_delivery, properties, _payload|
-                  returned = true if properties.message_id == expected_message_id
-                end
-                confirm_channel.confirm_select unless confirm_channel.using_publisher_confirmations?
-                destination.publish(payload, **envelope)
-                confirm_channel.wait_for_confirms
-              end
-              raise IOError, 'Apollo writeback publication was not accepted' unless confirmed == true && !returned
+              raise Timeout::Error, 'Apollo writeback confirmation timed out' if result[:status] == :confirm_timeout
 
-              { accepted: true, status: :accepted, message_id: expected_message_id }
-            rescue Timeout::Error => e
-              handle_exception(e, level: :warn, operation: 'apollo.writeback.publish')
-              close_confirm_channel(channel: confirm_channel)
-              raise
+              raise IOError, result[:error] || "Apollo writeback publication was not accepted: #{result[:status]}"
             rescue StandardError => e
               handle_exception(e, level: :warn, operation: 'apollo.writeback.publish')
               raise
-            ensure
-              @options = original_options if original_options
             end
 
             def validate
               raise TypeError, 'content is required' unless @options[:content].is_a?(String)
 
               @valid = true
-            end
-
-            private
-
-            def close_confirm_channel(channel:, **)
-              Timeout.timeout(1) { channel.close if channel&.open? }
-            rescue StandardError => e
-              handle_exception(e, level: :warn, operation: 'apollo.writeback.close_channel')
             end
           end
         end
