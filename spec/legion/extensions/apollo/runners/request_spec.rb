@@ -97,11 +97,17 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Request do
           require 'json'
           Legion::Transport::Connection.setup
           channel = Legion::Transport::Connection.session.create_channel
-          Legion::Extensions::Apollo::Transport::Exchanges::Apollo.new('legion.apollo', channel: channel)
+          exchange = Legion::Extensions::Apollo::Transport::Exchanges::Apollo.new('legion.apollo', channel: channel)
           queries = []
           ingests = []
-          Legion::Transport::Local.subscribe('legion.apollo.query') { |payload| queries << Legion::JSON.load(payload) }
-          Legion::Transport::Local.subscribe('legion.apollo.ingest') { |payload| ingests << Legion::JSON.load(payload) }
+          query_queue = channel.queue_declare_without_recording_topology('apollo-query-spec')
+          ingest_queue = channel.queue_declare_without_recording_topology('apollo-ingest-spec')
+          query_queue.bind(exchange, routing_key: 'legion.apollo.query').subscribe do |_delivery, _properties, payload|
+            queries << Legion::JSON.load(payload)
+          end
+          ingest_queue.bind(exchange, routing_key: 'legion.apollo.ingest').subscribe do |_delivery, _properties, payload|
+            ingests << Legion::JSON.load(payload)
+          end
           request = Legion::Extensions::Apollo::Runners::Request
           metadata = {
             status: ['candidate'], domain: 'security', agent_id: 'reader', requesting_principal_id: 41,

@@ -37,7 +37,7 @@ RSpec.describe Legion::Extensions::Apollo::Transport::Messages::Writeback do
         message = described_class.new(**options)
 
         expect(Legion::JSON.load(message.encode_message)).to include(base_opts.merge(metadata))
-        expect(message.publish_envelope_options(options)).to include(content_type: 'application/json')
+        expect(message.publish_envelope_options(options: options)).to include(content_type: 'application/json')
       end
     end
   end
@@ -66,13 +66,29 @@ RSpec.describe Legion::Extensions::Apollo::Transport::Messages::Writeback do
 
     it 'retains inherited encryption and IV headers instead of publishing raw JSON' do
       encrypted = described_class.new(**base_opts, encrypt: true)
-      allow(Legion::Settings[:crypt]).to receive(:[]).with(:cs_encrypt_ready).and_return(true)
+      crypt_settings = Legion::Settings[:crypt]
+      previous_readiness = crypt_settings[:cs_encrypt_ready]
+      crypt_settings[:cs_encrypt_ready] = true
       allow(Legion::Crypt).to receive(:encrypt).and_return(enciphered_message: 'opaque-ciphertext', iv: 'cipher-iv')
       encrypted.publish
       body, envelope = publications.fetch(0)
       expect(body).to eq('opaque-ciphertext')
       expect(envelope).to include(content_encoding: 'encrypted/cs')
       expect(envelope[:headers]).to include(iv: 'cipher-iv')
+    ensure
+      crypt_settings[:cs_encrypt_ready] = previous_readiness
+    end
+
+    it 'rejects requested encryption without publishing plaintext when the secret is not ready' do
+      crypt_settings = Legion::Settings[:crypt]
+      previous_readiness = crypt_settings[:cs_encrypt_ready]
+      crypt_settings[:cs_encrypt_ready] = false
+      encrypted = described_class.new(**base_opts, encrypt: true)
+
+      expect { encrypted.publish }.to raise_error(Legion::Transport::EncryptionNotReady)
+      expect(publications).to eq([])
+    ensure
+      crypt_settings[:cs_encrypt_ready] = previous_readiness
     end
 
     it 'raises on mandatory returns even when the broker confirms receipt' do

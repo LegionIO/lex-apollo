@@ -26,8 +26,8 @@ module Legion
               )
             end
 
-            def publish_envelope_options(options, **)
-              super(options.except(:content_type))
+            def publish_envelope_options(options:, **)
+              super(options: options.except(:content_type))
             end
 
             def type

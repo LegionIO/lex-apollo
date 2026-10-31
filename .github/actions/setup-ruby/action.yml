@@ -1,0 +1,53 @@
+name: Set up Apollo Ruby dependencies
+description: Use published gems when available, or exact unreleased companion commits for pull requests.
+inputs:
+  ruby-version:
+    description: Ruby version to install
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Check published companion versions
+      id: dependencies
+      if: github.event_name == 'pull_request'
+      shell: python3 {0}
+      run: |
+        import json
+        import os
+        import urllib.request
+
+        dependencies = {
+            "data": ("legion-data", (1, 10, 29)),
+            "llm": ("legion-llm", (0, 16, 10)),
+        }
+        with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+            for key, (name, required) in dependencies.items():
+                with urllib.request.urlopen(
+                    f"https://rubygems.org/api/v1/versions/{name}/latest.json", timeout=30
+                ) as response:
+                    published = json.load(response)["version"]
+                use_companion = tuple(map(int, published.split("."))) < required
+                output.write(f"{key}={str(use_companion).lower()}\n")
+    # legion-data#85: migration 139 and ownership-scoped uniqueness.
+    - name: Check out Apollo schema companion
+      if: steps.dependencies.outputs.data == 'true'
+      uses: actions/checkout@v4
+      with:
+        repository: LegionIO/legion-data
+        ref: e4cedb06e33abfa56d066fcff36aadeda77bb8cf
+        path: tmp/ci-dependencies/legion-data
+        persist-credentials: false
+    # legion-llm#199: routed embedding provenance and validation.
+    - name: Check out Apollo embedding companion
+      if: steps.dependencies.outputs.llm == 'true'
+      uses: actions/checkout@v4
+      with:
+        repository: LegionIO/legion-llm
+        ref: 1ab0992535dae918c92c88a754bb50e7221f0d18
+        path: tmp/ci-dependencies/legion-llm
+        persist-credentials: false
+    - name: Set up Ruby and install the bundle
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: ${{ inputs.ruby-version }}
+        bundler-cache: true

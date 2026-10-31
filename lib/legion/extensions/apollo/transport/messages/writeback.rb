@@ -32,8 +32,8 @@ module Legion
               )
             end
 
-            def publish_envelope_options(options, **)
-              super(options.except(:content_type))
+            def publish_envelope_options(options:, **)
+              super(options: options.except(:content_type))
             end
 
             def publish(options = nil, **)
@@ -51,7 +51,7 @@ module Legion
                 raise Legion::Transport::PayloadTooLarge, 'Apollo writeback exceeds the transport payload limit'
               end
 
-              envelope = publish_envelope_options(@options)
+              envelope = publish_envelope_options(options: @options)
               expected_message_id = @options[:message_id]
               returned = false
               confirm_channel = nil
