@@ -8,13 +8,73 @@ on:
 
 jobs:
   ci:
-    uses: LegionIO/.github/.github/workflows/ci.yml@main
+    name: ci / RSpec (Ruby ${{ matrix.ruby }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby: ['3.4', '4.0']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-ruby
+        with:
+          ruby-version: ${{ matrix.ruby == '4.0' && '4.0.5' || matrix.ruby }}
+      - name: Run RSpec
+        run: |
+          mkdir -p tmp
+          bundle exec rspec --format json --out tmp/rspec_results.json --format progress --out tmp/rspec_progress.txt > tmp/rspec_process.log 2>&1
+      - name: Upload RSpec results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rspec-ruby-${{ matrix.ruby }}
+          path: |
+            tmp/rspec_results.json
+            tmp/rspec_progress.txt
+            tmp/rspec_process.log
+          if-no-files-found: ignore
+
+  rubocop:
+    name: ci / RuboCop
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-ruby
+        with:
+          ruby-version: '3.4'
+      - name: Run RuboCop
+        run: bundle exec rubocop
 
   excluded-files:
     uses: LegionIO/.github/.github/workflows/excluded-files.yml@main
 
   security:
-    uses: LegionIO/.github/.github/workflows/security-scan.yml@main
+    name: security / Bundler Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-ruby
+        with:
+          ruby-version: '3.4'
+      - name: Install bundler-audit
+        run: gem install bundler-audit
+      - name: Run bundler-audit
+        run: bundler-audit check --update
 
   version-changelog:
     uses: LegionIO/.github/.github/workflows/version-changelog.yml@main
@@ -27,7 +87,7 @@ jobs:
     uses: LegionIO/.github/.github/workflows/stale.yml@main
 
   release:
-    needs: [ci, excluded-files]
+    needs: [ci, rubocop, excluded-files]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     uses: LegionIO/.github/.github/workflows/release.yml@main
     secrets:

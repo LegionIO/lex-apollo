@@ -78,6 +78,15 @@ RSpec.describe Legion::Extensions::Apollo::Transport::Messages::Writeback do
       expect(Legion::JSON.load(plaintext)).to include(base_opts)
     end
 
+    it 'rejects requested encryption without publishing plaintext when the secret is not ready' do
+      allow(Legion::Settings).to receive(:dig).and_call_original
+      allow(Legion::Settings).to receive(:dig).with(:crypt, :cs_encrypt_ready).and_return(false)
+      encrypted = described_class.new(**base_opts, encrypt: true)
+
+      expect { encrypted.publish }.to raise_error(Legion::Transport::EncryptionNotReady)
+      expect(publications).to eq([])
+    end
+
     it 'raises on mandatory returns even when the broker confirms receipt' do
       allow(exchange).to receive(:publish) do |_body, **envelope|
         return_info = double(reply_code: 312, reply_text: 'NO_ROUTE')

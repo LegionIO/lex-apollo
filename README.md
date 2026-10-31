@@ -208,6 +208,10 @@ See `helpers/confidence.rb` for all constants and math helpers.
 
 ## Development
 
+PR checks run the full Ruby 3.4/4.0 suite, RuboCop, and Bundler Audit against the same Gemfile. `.github/actions/setup-ruby/action.yml` checks published companion versions before Bundler runs and checks out the exact schema/provenance commits under `tmp/ci-dependencies/` only while their required releases are unavailable. Each dependency automatically returns to RubyGems once published; main, scheduled, and release builds always use published gems.
+
+To reproduce the unreleased stack locally, place the companion revisions named in that action under `tmp/ci-dependencies/legion-data` and `tmp/ci-dependencies/legion-llm`, then run the commands below. The Gemfile's local paths are guarded; lockfiles and these temporary checkouts remain untracked.
+
 ```bash
 bundle install
 bundle exec rspec

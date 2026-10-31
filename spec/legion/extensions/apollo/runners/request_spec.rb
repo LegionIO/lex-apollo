@@ -97,13 +97,17 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Request do
           require 'json'
           Legion::Transport::Connection.setup
           channel = Legion::Transport::Connection.session.create_channel
-          Legion::Extensions::Apollo::Transport::Exchanges::Apollo.new('legion.apollo', channel: channel)
+          exchange = Legion::Extensions::Apollo::Transport::Exchanges::Apollo.new('legion.apollo', channel: channel)
           queries = []
           ingests = []
-          query_queue = Legion::Transport::CONNECTOR::Queue.new(channel, 'apollo-query-smoke').bind('legion.apollo', routing_key: 'legion.apollo.query')
-          ingest_queue = Legion::Transport::CONNECTOR::Queue.new(channel, 'apollo-ingest-smoke').bind('legion.apollo', routing_key: 'legion.apollo.ingest')
-          query_queue.subscribe(manual_ack: false) { |_delivery, _properties, payload| queries << Legion::JSON.load(payload) }
-          ingest_queue.subscribe(manual_ack: false) { |_delivery, _properties, payload| ingests << Legion::JSON.load(payload) }
+          query_queue = channel.queue_declare_without_recording_topology('apollo-query-spec')
+          ingest_queue = channel.queue_declare_without_recording_topology('apollo-ingest-spec')
+          query_queue.bind(exchange, routing_key: 'legion.apollo.query').subscribe do |_delivery, _properties, payload|
+            queries << Legion::JSON.load(payload)
+          end
+          ingest_queue.bind(exchange, routing_key: 'legion.apollo.ingest').subscribe do |_delivery, _properties, payload|
+            ingests << Legion::JSON.load(payload)
+          end
           request = Legion::Extensions::Apollo::Runners::Request
           metadata = {
             status: ['candidate'], domain: 'security', agent_id: 'reader', requesting_principal_id: 41,
