@@ -1,32 +1,20 @@
 # frozen_string_literal: true
 
 require 'legion/extensions/actors/subscription'
-require_relative '../runners/gas'
+require 'legion/extensions/apollo/runners/gas'
+require 'legion/extensions/apollo/transport/subscription_delivery'
 
 module Legion
   module Extensions
     module Apollo
       module Actor
         class GasSubscriber < Legion::Extensions::Actors::Subscription
+          include Legion::Extensions::Apollo::Transport::SubscriptionDelivery
+
           def runner_class    = Legion::Extensions::Apollo::Runners::Gas
           def runner_function = 'process'
           def check_subtask?  = false
           def generate_task?  = false
-          def use_runner?     = false
-
-          def enabled? # rubocop:disable Legion/Extension/ActorEnabledSideEffects
-            defined?(Legion::Extensions::Apollo::Runners::Gas) &&
-              Legion.const_defined?(:Transport, false)
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'apollo.gas_subscriber.enabled')
-            false
-          end
-
-          def create_queue
-            exchange_object = Legion::Extensions::Apollo::Transport::Exchanges::LlmAudit.new
-            queue_object = Legion::Extensions::Apollo::Transport::Queues::GasSubscriber.new
-            queue_object.bind(exchange_object, routing_key: 'llm.audit.complete')
-          end
         end
       end
     end

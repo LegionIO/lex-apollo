@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/extensions/actors/every'
-require_relative '../runners/expertise'
+require 'legion/extensions/apollo/runners/expertise'
 
 module Legion
   module Extensions

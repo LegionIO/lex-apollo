@@ -1,155 +1,22 @@
 # frozen_string_literal: true
 
-require 'digest'
 require 'legion/extensions/actors/every'
-require_relative '../runners/knowledge'
-require_relative '../runners/entity_extractor'
+require 'legion/extensions/apollo/runners/entity_watchdog'
 
 module Legion
   module Extensions
     module Apollo
       module Actor
         class EntityWatchdog < Legion::Extensions::Actors::Every
-          include Legion::Extensions::Apollo::Runners::Knowledge
-          include Legion::Extensions::Apollo::Runners::EntityExtractor
           include Legion::Settings::Helper
 
-          DEDUP_THRESHOLD_DEFAULT   = 0.92
-          TASK_LOG_LOOKBACK_SECONDS = 300
-          TASK_LOG_LIMIT            = 50
-
-          def runner_class    = self.class
+          def runner_class    = Legion::Extensions::Apollo::Runners::EntityWatchdog
           def runner_function = 'scan_and_ingest'
           def time            = settings[:actors][:entity_watchdog_interval]
           def run_now?        = false
           def use_runner?     = false
           def check_subtask?  = false
           def generate_task?  = false
-
-          def enabled? # rubocop:disable Legion/Extension/ActorEnabledSideEffects
-            defined?(Legion::Extensions::Apollo::Runners::EntityExtractor) &&
-              Legion.const_defined?(:Transport, false)
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'apollo.entity_watchdog.enabled')
-            false
-          end
-
-          def scan_and_ingest
-            texts = recent_task_log_texts
-            log.debug("EntityWatchdog scan_and_ingest log_texts=#{texts.size}")
-            return { success: true, ingested: 0, reason: :no_logs } if texts.empty?
-
-            ingested = 0
-            texts.each do |text|
-              next if task_log_text_processed?(text)
-
-              result = extract_entities(
-                text:           text,
-                entity_types:   entity_types,
-                min_confidence: min_entity_confidence
-              )
-              next unless result[:success]
-
-              mark_task_log_text_processed(text) unless result[:source] == :unavailable
-              result[:entities].each do |entity|
-                next if entity_exists_in_apollo?(entity)
-
-                publish_entity_ingest(entity)
-                ingested += 1
-              end
-            end
-
-            log.info("EntityWatchdog ingested=#{ingested} logs_scanned=#{texts.size}")
-            { success: true, ingested: ingested, logs_scanned: texts.size }
-          rescue StandardError => e
-            handle_exception(e, level: :error, operation: 'apollo.entity_watchdog.scan_and_ingest')
-            { success: false, error: e.message }
-          end
-
-          def recent_task_log_texts
-            return [] unless defined?(Legion::Data) && defined?(Legion::Data::Model::TaskLog)
-
-            lookback = settings[:entity_watchdog][:lookback_seconds]
-            log_limit = settings[:entity_watchdog][:log_limit]
-            cutoff = Time.now - lookback
-            logs = Legion::Data::Model::TaskLog
-                   .where { created_at >= cutoff }
-                   .order(Sequel.desc(:created_at))
-                   .limit(log_limit)
-                   .select_map(:message)
-            texts = logs.map(&:to_s).reject(&:empty?).uniq
-            log.debug("EntityWatchdog recent_task_log_texts lookback=#{lookback} limit=#{log_limit} raw=#{logs.size} unique=#{texts.size}")
-            texts
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'apollo.entity_watchdog.recent_task_log_texts')
-            []
-          end
-
-          def entity_exists_in_apollo?(entity)
-            result = retrieve_relevant(
-              query:          entity[:name].to_s,
-              limit:          1,
-              min_confidence: settings[:entity_watchdog][:exists_min_confidence],
-              tags:           [entity[:type].to_s]
-            )
-            return false unless result[:success] && result[:count].positive?
-
-            closest = result[:entries].first
-            distance = closest[:distance].to_f
-            distance <= (1.0 - dedup_similarity_threshold)
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'apollo.entity_watchdog.entity_exists_in_apollo')
-            false
-          end
-
-          def publish_entity_ingest(entity)
-            return unless defined?(Legion::Extensions::Apollo::Transport::Messages::Ingest)
-
-            Legion::Extensions::Apollo::Transport::Messages::Ingest.new(
-              content:      "#{entity[:type].to_s.capitalize}: #{entity[:name]}",
-              content_type: 'concept',
-              tags:         [entity[:type].to_s, 'entity_watchdog'],
-              source_agent: 'lex-apollo:entity_watchdog',
-              context:      { entity_type: entity[:type], original_name: entity[:name] }
-            ).publish
-            log.info("EntityWatchdog published entity type=#{entity[:type]} name=#{entity[:name]}")
-          rescue StandardError => e
-            handle_exception(e, level: :error, operation: 'apollo.entity_watchdog.publish_entity_ingest')
-          end
-
-          def entity_types
-            Array(settings[:entity_watchdog][:types]).map(&:to_s)
-          end
-
-          def min_entity_confidence
-            settings[:entity_watchdog][:min_confidence].to_f
-          end
-
-          def dedup_similarity_threshold
-            settings[:entity_watchdog][:dedup_threshold].to_f
-          end
-
-          def task_log_text_processed?(text)
-            processed_task_log_hashes.key?(task_log_text_hash(text))
-          end
-
-          def mark_task_log_text_processed(text)
-            hashes = processed_task_log_hashes
-            hashes[task_log_text_hash(text)] = true
-            hashes.shift while hashes.size > processed_task_log_hash_limit
-          end
-
-          def processed_task_log_hashes
-            @processed_task_log_hashes ||= {}
-          end
-
-          def processed_task_log_hash_limit
-            [settings[:entity_watchdog][:log_limit].to_i * 4, 100].max
-          end
-
-          def task_log_text_hash(text)
-            Digest::SHA256.hexdigest(text.to_s)
-          end
         end
       end
     end

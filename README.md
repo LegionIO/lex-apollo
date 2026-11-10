@@ -6,7 +6,7 @@ Shared durable knowledge store for the GAIA cognitive mesh. Agents publish confi
 
 `lex-apollo` operates in two modes:
 
-- **Client mode**: Any agent loads this gem and calls runners. Runners publish to RabbitMQ — no direct database access required.
+- **Client mode**: Load this gem without LegionIO. `Client` executes against loaded local models or returns action payloads where supported; `Runners::Request` handles broker publication when no local service is available.
 - **Service mode**: A dedicated Apollo process runs the actors, subscribes to queues, generates embeddings, and writes to PostgreSQL+pgvector or SQLite.
 
 PostgreSQL uses native vector distance; SQLite stores JSON vectors and computes exact similarity over eligible rows, keeping bounded top-k results without limiting the candidate set before ranking. Both backends enforce the same ownership, filter, provenance, and traversal boundaries.
@@ -25,10 +25,11 @@ gem 'lex-apollo'
 
 ```ruby
 require 'legion/extensions/apollo'
+require 'legion/extensions/apollo/client'
 
 client = Legion::Extensions::Apollo::Client.new
 
-# Build a store payload (published to RabbitMQ for the Apollo service to persist)
+# Store locally, or build a payload when no Entry model is loaded
 client.store_knowledge(
   content:      'BGP route reflectors reduce full-mesh IBGP complexity',
   content_type: :fact,
@@ -125,7 +126,7 @@ Every usable vector carries `embedding_provenance`: routed provider/model, autho
 Backfill legacy rows in bounded batches:
 
 ```ruby
-maintenance = Object.new.extend(Legion::Extensions::Apollo::Runners::Maintenance)
+maintenance = Legion::Extensions::Apollo::Runners::Maintenance
 result = maintenance.reembed_entries(limit: 100, after_id: nil)
 # Continue from result[:next_after_id]; inspect result[:failures] for retries.
 ```
@@ -137,6 +138,8 @@ PostgreSQL migration removes incompatible direct-column ANN indexes but preserve
 ### Writeback Delivery
 
 `WritebackVectorize` dispatches to the callable Writeback runner. Generation errors, explicit ingest failures, and failed broker publications raise into subscription retry handling. Forwarding strips the inbound exchange/routing key so generated vectors reach `legion.apollo.writeback.store`, not the vectorizer again. Producer ownership (including explicit null), context, source metadata, and embedding provenance survive delivery. Mandatory routing and bounded publisher confirms establish broker acceptance, not synchronous remote persistence.
+
+`Ingest`, `WritebackStore`, and `GasSubscriber` reject unsuccessful runner results into retry handling rather than acknowledging them as completed. The subscription delivery hook invokes the runner directly because the host task dispatcher can suppress runner exceptions; Apollo does not generate tasks or subtasks for these deliveries. Retry exhaustion dead-letters the message. RPC retries retain `reply_to` and `correlation_id`.
 
 Core-client legacy wire migration and synchronous retrieval deadlines/fan-out remain outside this server release.
 
@@ -154,6 +157,12 @@ Service actors include:
 | `GasSubscriber` | Subscription | on-message | Process `llm.audit.complete` events and persist accepted GAS outputs |
 | `WritebackVectorize` | Subscription | on-message | Generate compatible document vectors and ingest or forward with retryable failures |
 | `WritebackStore` | Subscription | on-message | Persist producer-owned writeback payloads |
+| `ContradictionScanner` | Interval | 600s | Scan queued entries and retain failures for retry |
+| `EntityWatchdog` | Interval | 120s | Extract entities from recent `TaskLog.entry` values and publish missing knowledge |
+
+Actors own scheduling and delivery management; runner modules own workflows. Call public runner methods on their modules rather than extending arbitrary objects. Helpers provide private, concern-prefixed utilities. The existing `Helpers::Writeback.evaluate_and_route` and `content_hash(content:)` APIs remain unchanged pending their separate caller migration.
+
+Semantic embedding or lookup failure returns an explicit failure, not browse results or an empty successful search. Expertise queries require local models, return plain hashes, and count distinct agents for domain coverage. The watchdog counts accepted publications, remembers only successfully processed log texts, and retries failed texts.
 
 ### Atomic Ingestion
 
@@ -172,6 +181,7 @@ The `process` result's top-level counts describe generated phase outputs. Its `d
 - `deposited`, `facts`, and `synthesis` count successful ingest results with entry IDs, including deduplication—not just newly inserted rows.
 - `failed` counts rejected or failed entry writes.
 - `relations`, `relations_failed`, and `relations_skipped` distinguish persisted edges, failed writes or missing endpoints, and intentionally skipped edges.
+- Top-level `success` is false when an entry or relation write fails; operational phase failures also return an explicit error.
 
 Relations must meet the configured confidence gate, use a supported type, and connect an unambiguous successful fact deposit to an existing target in the same access scope. Self-links and duplicate edges within the batch are skipped. Independent relation failures do not discard successful entry deposits or prevent later edges from being processed. Existing GAS types `supports_by` and `extends` are also accepted by graph traversal.
 
@@ -185,14 +195,13 @@ Apollo is wired into the GAIA tick cycle at the `knowledge_retrieval` phase (pha
 
 Entries have a confidence score between 0.0 and 1.0:
 
-- New entries start at `INITIAL_CONFIDENCE` (0.5) with status `candidate`
+- New entries start at `confidence.initial` (default 0.5) with status `candidate`
 - Ingestion corroborates confirmed evidence. The bounded periodic checker can bootstrap one confirmation from a pair of independently sourced candidates; it marks that confirmation as bootstrap-derived so its paired candidate does not confirm solely by seeing the new status on a later scan.
 - Corroboration stays within the same knowledge domain, content type, and access scope. Equal known providers and equal source channels are not independent. Private evidence requires the same resolved owner; team evidence requires shared identity-group membership. Unresolved private/team ownership does not corroborate.
 - Each retrieval adds a small boost (+0.02, capped at 1.0)
-- Confidence decays hourly by factor 0.998; entries below 0.1 are archived
-- The GAIA write gate (`meets_write_gate?`) requires confidence > 0.6 and novelty > 0.3 for the tick write-back path
+- The hourly maintenance cycle applies age-dependent power-law decay after `decay_min_age_hours` (default 168 hours), using `power_law_alpha` (default 0.05). Eligible entries below `decay_threshold` (default 0.05) are archived.
 
-See `helpers/confidence.rb` for all constants and math helpers.
+Defaults live in `Apollo.default_settings`; maintenance owns decay and the private confidence helpers calculate retrieval and corroboration boosts.
 
 ## Requirements
 

@@ -19,7 +19,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::QueryResponse do
   before do
     hide_const('Legion::Data::Model::Apollo') if defined?(Legion::Data::Model::Apollo)
     hide_const('Legion::Identity::Process') if defined?(Legion::Identity::Process)
-    stub_const('Legion::Data::Model::ApolloEntry', entry_model)
+    stub_const('Legion::Data::Model::Apollo::Entry', entry_model)
     allow(entry_model).to receive(:exclude).and_return(dataset)
     allow(dataset).to receive_messages(where: dataset, order: dataset, limit: dataset, all: [entry])
     allow(database).to receive(:fetch).and_return(dataset)

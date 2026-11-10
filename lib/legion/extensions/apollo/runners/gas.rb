@@ -1,54 +1,47 @@
 # frozen_string_literal: true
 
+require 'legion/llm/inference'
+require 'legion/logging/helper'
+require 'legion/settings/helper'
+require 'legion/json'
+require 'legion/extensions/apollo/helpers/data_models'
+require 'legion/extensions/apollo/runners/entity_extractor'
+require 'legion/extensions/apollo/runners/knowledge'
+
 module Legion
   module Extensions
     module Apollo
       module Runners
         module Gas
-          include Legion::Extensions::Helpers::Lex if defined?(Legion::Extensions::Helpers::Lex)
           include Legion::Logging::Helper
           include Legion::JSON::Helper
-          extend Legion::Extensions::Helpers::Lex if defined?(Legion::Extensions::Helpers::Lex)
-          extend Legion::Logging::Helper
-          extend Legion::JSON::Helper
+          include Legion::Settings::Helper
+          extend Legion::Extensions::Apollo::Helpers::DataModels
 
           RELATION_TYPES = %w[
             similar_to contradicts depends_on causes
             part_of supersedes supports_by extends
           ].freeze
 
-          RELATE_CONFIDENCE_GATE = 0.7
-          SYNTHESIS_CONFIDENCE_CAP = 0.7
-          MAX_ANTICIPATIONS = 3
-
-          module_function
-
-          def json_load(str)
-            json_parse(str)
-          end
-
-          def relate_confidence_gate = Legion::Extensions::Apollo.settings[:gas][:relate_confidence_gate]
-          def synthesis_confidence_cap = Legion::Extensions::Apollo.settings[:gas][:synthesis_confidence_cap]
-          def max_anticipations       = Legion::Extensions::Apollo.settings[:gas][:max_anticipations]
-          def similar_entries_limit   = Legion::Extensions::Apollo.settings[:gas][:similar_entries_limit]
-          def fallback_confidence     = Legion::Extensions::Apollo.settings[:gas][:fallback_confidence]
+          extend self
 
           def process(**audit_event)
-            unless processable?(audit_event)
+            unless gas_processable?(audit_event)
               log.debug('GAS process skipped reason=no_content')
-              return { phases_completed: 0, reason: 'no content' }
+              return { success: true, phases_completed: 0, reason: 'no content' }
             end
 
             log.debug("GAS process start request_id=#{audit_event[:request_id] || 'nil'} messages=#{Array(audit_event[:messages]).size} response_length=#{audit_event[:response_content].to_s.length}") # rubocop:disable Layout/LineLength
 
-            facts = phase_comprehend(audit_event)
-            entities = phase_extract(audit_event, facts)
-            relations = phase_relate(facts: facts)
-            synthesis = phase_synthesize(facts, relations)
-            deposit_result = phase_deposit(facts: facts, relations: relations, synthesis: synthesis, audit_event: audit_event)
-            anticipations = phase_anticipate(facts, synthesis)
+            facts = gas_phase_comprehend(audit_event)
+            entities = gas_phase_extract(audit_event, facts)
+            relations = gas_phase_relate(facts: facts)
+            synthesis = gas_phase_synthesize(facts, relations)
+            deposit_result = gas_phase_deposit(facts: facts, relations: relations, synthesis: synthesis, audit_event: audit_event)
+            anticipations = gas_phase_anticipate(facts, synthesis)
 
             result = {
+              success:          deposit_result[:failed].zero? && deposit_result[:relations_failed].zero?,
               phases_completed: 6,
               facts:            facts.length,
               entities:         entities.length,
@@ -61,49 +54,40 @@ module Legion
             result
           rescue StandardError => e
             handle_exception(e, level: :error, operation: 'apollo.gas.process')
-            { phases_completed: 0, error: e.message }
+            { success: false, phases_completed: 0, error: e.message }
           end
 
-          def processable?(event)
+          private
+
+          def gas_processable?(event)
             event[:messages]&.any? == true && !event[:response_content].nil?
           end
 
           # Phase 1: Comprehend - extract typed facts from the exchange
-          def phase_comprehend(audit_event)
+          def gas_phase_comprehend(audit_event)
             messages = audit_event[:messages]
             response = audit_event[:response_content]
 
-            mode = llm_available? ? :llm : :mechanical
+            mode = Legion::LLM.started? ? :llm : :mechanical
             log.debug("GAS phase_comprehend mode=#{mode} messages=#{Array(messages).size} response_length=#{response.to_s.length}")
-            facts = mode == :llm ? llm_comprehend(messages, response) : mechanical_comprehend(messages, response)
+            facts = mode == :llm ? gas_llm_comprehend(messages, response) : gas_mechanical_comprehend(messages, response)
             log.debug("GAS phase_comprehend facts=#{facts.size}")
             facts
           end
 
           # Phase 2: Extract - entity extraction (delegates to existing EntityExtractor)
-          def phase_extract(audit_event, _facts)
-            unless defined?(Runners::EntityExtractor)
-              log.debug('GAS phase_extract skipped reason=entity_extractor_unavailable')
-              return []
-            end
+          def gas_phase_extract(audit_event, _facts)
+            result = Legion::Extensions::Apollo::Runners::EntityExtractor.extract_entities(text: audit_event[:response_content])
+            raise IOError, "Apollo entity extraction failed: #{result[:error]}" unless result[:success]
 
-            result = Runners::EntityExtractor.extract_entities(text: audit_event[:response_content])
-            entities = result[:success] ? (result[:entities] || []) : []
+            entities = result[:entities]
             log.debug("GAS phase_extract success=#{result[:success]} entities=#{entities.size}")
             entities
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'apollo.gas.phase_extract')
-            []
           end
 
           # Phase 3: Relate - classify relationships between new and existing entries
-          def phase_relate(facts:, **)
-            unless defined?(Runners::Knowledge)
-              log.debug('GAS phase_relate skipped reason=knowledge_runner_unavailable')
-              return []
-            end
-
-            existing = fetch_similar_entries(facts: facts)
+          def gas_phase_relate(facts:, **)
+            existing = gas_fetch_similar_entries(facts: facts)
             if existing.empty?
               log.debug("GAS phase_relate skipped reason=no_existing_entries facts=#{facts.size}")
               return []
@@ -112,7 +96,7 @@ module Legion
             relations = []
             facts.each do |fact|
               existing.each do |entry|
-                relation = classify_relation(fact, entry)
+                relation = gas_classify_relation(fact, entry)
                 relations << relation if relation
               end
             end
@@ -121,33 +105,24 @@ module Legion
           end
 
           # Phase 4: Synthesize - generate derivative knowledge
-          def phase_synthesize(facts, _relations)
+          def gas_phase_synthesize(facts, _relations)
             if facts.length < 2
               log.debug("GAS phase_synthesize skipped reason=insufficient_facts facts=#{facts.length}")
               return []
             end
-            unless llm_available?
+            unless Legion::LLM.started?
               log.debug('GAS phase_synthesize skipped reason=llm_unavailable')
               return []
             end
 
-            synthesis = llm_synthesize(facts)
+            synthesis = gas_llm_synthesize(facts)
             log.debug("GAS phase_synthesize synthesis=#{synthesis.size}")
             synthesis
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'apollo.gas.phase_synthesize')
-            []
           end
 
           # Phase 5: Deposit entries, then link successfully stored facts.
-          def phase_deposit(facts:, relations:, synthesis:, audit_event:, **)
+          def gas_phase_deposit(facts:, relations:, synthesis:, audit_event:, **)
             counts = { deposited: 0, failed: 0, facts: 0, synthesis: 0 }
-            unless defined?(Legion::Extensions::Apollo::Runners::Knowledge)
-              return counts.merge(failed: facts.size + synthesis.size, relations: 0,
-                                  relations_failed: relations.size, relations_skipped: 0)
-            end
-
-            knowledge = Object.new.extend(Legion::Extensions::Apollo::Runners::Knowledge)
             fact_ids = Array.new(facts.size)
             source_ids = {}
             { facts: facts, synthesis: synthesis }.each do |kind, entries|
@@ -159,7 +134,7 @@ module Legion
                     fact_ids[source_index] if source_index.is_a?(Integer) && source_index.between?(0, facts.size - 1)
                   end.uniq
                 end
-                result = knowledge.handle_ingest(
+                result = Legion::Extensions::Apollo::Runners::Knowledge.handle_ingest(
                   content: item[:content], content_type: item[:content_type].to_s,
                   tags: %w[gas auto_extracted], source_agent: 'gas_pipeline',
                   source_provider: audit_event.dig(:routing, :provider),
@@ -190,13 +165,13 @@ module Legion
           def gas_deposit_relations(relations:, source_ids:)
             counts = { relations: 0, relations_failed: 0, relations_skipped: 0 }
             return counts if relations.empty?
-            unless Legion::Extensions::Apollo::Helpers::DataModels.apollo_entry_available? &&
-                   Legion::Extensions::Apollo::Helpers::DataModels.apollo_relation_available?
+            unless !data_model_entry.nil? &&
+                   !data_model_relation.nil?
               return counts.merge(relations_failed: relations.size)
             end
 
-            entry_model = Legion::Extensions::Apollo::Helpers::DataModels.apollo_entry
-            relation_model = Legion::Extensions::Apollo::Helpers::DataModels.apollo_relation
+            entry_model = data_model_entry
+            relation_model = data_model_relation
             seen = {}
             relations.each do |relation|
               type = relation[:relation_type].to_s
@@ -232,59 +207,52 @@ module Legion
           def gas_relation_accepted?(type:, confidence:)
             Legion::Extensions::Apollo::Helpers::Confidence::RELATION_TYPES.include?(type) &&
               confidence.is_a?(Numeric) && confidence.real? && confidence.finite? &&
-              confidence.between?(relate_confidence_gate, 1.0)
+              confidence.between?(settings[:gas][:relate_confidence_gate], 1.0)
           end
-          private_class_method :gas_deposit_relations, :gas_relation_accepted?
 
           # Phase 6: Anticipate - pre-cache likely follow-up questions
-          def phase_anticipate(facts, _synthesis)
+          def gas_phase_anticipate(facts, _synthesis)
             if facts.empty?
               log.debug('GAS phase_anticipate skipped reason=no_facts')
               return []
             end
-            unless llm_available?
+            unless Legion::LLM.started?
               log.debug('GAS phase_anticipate skipped reason=llm_unavailable')
               return []
             end
 
-            anticipations = llm_anticipate(facts)
+            anticipations = gas_llm_anticipate(facts)
             log.debug("GAS phase_anticipate anticipations=#{anticipations.size}")
             anticipations
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'apollo.gas.phase_anticipate')
-            []
           end
 
-          def fetch_similar_entries(facts:, **)
-            lim = similar_entries_limit
-            min_conf = Helpers::GraphQuery.default_query_min_confidence
+          def gas_fetch_similar_entries(facts:, **)
+            lim = settings[:gas][:similar_entries_limit]
+            min_conf = settings[:query][:default_min_confidence]
             entries = []
-            knowledge = Object.new.extend(Legion::Extensions::Apollo::Runners::Knowledge)
             facts.each do |fact|
-              result = knowledge.retrieve_relevant(query: fact[:content], limit: lim, min_confidence: min_conf)
-              entries.concat(result[:entries]) if result[:success] && result[:entries]&.any?
-            rescue StandardError => e
-              handle_exception(e, level: :warn, operation: 'apollo.gas.fetch_similar_entries')
-              next
+              result = Legion::Extensions::Apollo::Runners::Knowledge.retrieve_relevant(
+                query: fact[:content], limit: lim, min_confidence: min_conf
+              )
+              raise IOError, "Apollo semantic retrieval failed: #{result[:error]}" unless result[:success]
+
+              entries.concat(result[:entries])
             end
             unique = entries.uniq { |e| e[:id] }
             log.debug("GAS fetch_similar_entries facts=#{facts.size} entries=#{unique.size}")
             unique
           end
 
-          def classify_relation(fact, entry)
-            fb_conf = fallback_confidence
-            if llm_available?
-              llm_classify_relation(fact, entry)
+          def gas_classify_relation(fact, entry)
+            fb_conf = settings[:gas][:fallback_confidence]
+            if Legion::LLM.started?
+              gas_llm_classify_relation(fact, entry)
             else
               { from_content: fact[:content], to_id: entry[:id], relation_type: 'similar_to', confidence: fb_conf }
             end
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'apollo.gas.classify_relation')
-            { from_content: fact[:content], to_id: entry[:id], relation_type: 'similar_to', confidence: fallback_confidence }
           end
 
-          def llm_classify_relation(fact, entry) # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+          def gas_llm_classify_relation(fact, entry) # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
             prompt = <<~PROMPT
               Classify the relationship between these two knowledge entries.
               Valid types: #{RELATION_TYPES.join(', ')}
@@ -295,7 +263,7 @@ module Legion
               Return JSON with relation_type and confidence (0.0-1.0).
             PROMPT
 
-            result = Legion::LLM::Pipeline::GaiaCaller.structured(
+            result = Legion::LLM::Inference::GaiaCaller.structured(
               message: prompt.strip,
               schema:  {
                 type:       :object,
@@ -321,28 +289,25 @@ module Legion
                      result[:data][:relations] || result.dig(:data, 'relations') || []
                    else
                      content = result.respond_to?(:message) ? result.message[:content] : result.to_s
-                     parsed = json_load(content)
+                     parsed = json_parse(content)
                      parsed.is_a?(Hash) ? (parsed[:relations] || parsed['relations'] || []) : []
                    end
             best = rels.max_by { |r| r[:confidence] || r['confidence'] || 0 }
 
-            return fallback_relation(fact, entry) unless best
+            return gas_fallback_relation(fact, entry) unless best
 
             conf = best[:confidence] || best['confidence'] || 0
             rtype = best[:relation_type] || best['relation_type']
-            return fallback_relation(fact, entry) if conf < relate_confidence_gate || !RELATION_TYPES.include?(rtype)
+            return gas_fallback_relation(fact, entry) if conf < settings[:gas][:relate_confidence_gate] || !RELATION_TYPES.include?(rtype)
 
             { from_content: fact[:content], to_id: entry[:id], relation_type: rtype, confidence: conf }
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'apollo.gas.llm_classify_relation')
-            fallback_relation(fact, entry)
           end
 
-          def fallback_relation(fact, entry)
-            { from_content: fact[:content], to_id: entry[:id], relation_type: 'similar_to', confidence: fallback_confidence }
+          def gas_fallback_relation(fact, entry)
+            { from_content: fact[:content], to_id: entry[:id], relation_type: 'similar_to', confidence: settings[:gas][:fallback_confidence] }
           end
 
-          def llm_synthesize(facts)
+          def gas_llm_synthesize(facts)
             facts_text = facts.each_with_index.map { |f, i| "[#{i}] (#{f[:content_type]}) #{f[:content]}" }.join("\n")
 
             prompt = <<~PROMPT
@@ -355,7 +320,7 @@ module Legion
               Return JSON with a "synthesis" array where each item has: content (string), content_type (inference/implication/connection), source_indices (array of entry indices used).
             PROMPT
 
-            result = Legion::LLM::Pipeline::GaiaCaller.structured(
+            result = Legion::LLM::Inference::GaiaCaller.structured(
               message: prompt.strip,
               schema:  {
                 type:       :object,
@@ -382,39 +347,36 @@ module Legion
                       result[:data][:synthesis] || result.dig(:data, 'synthesis') || []
                     else
                       content = result.respond_to?(:message) ? result.message[:content] : result.to_s
-                      parsed = json_load(content)
+                      parsed = json_parse(content)
                       parsed.is_a?(Hash) ? (parsed[:synthesis] || parsed['synthesis'] || []) : []
                     end
 
-            items.map { |item| build_synthesis_entry(item, facts) }
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'apollo.gas.llm_synthesize')
-            []
+            items.map { |item| gas_build_synthesis_entry(item, facts) }
           end
 
-          def build_synthesis_entry(item, facts)
+          def gas_build_synthesis_entry(item, facts)
             source_indices = item[:source_indices] || item['source_indices'] || []
             source_confs = source_indices.filter_map { |i| facts[i]&.dig(:confidence) }
-            fb = fallback_confidence
-            geo_mean = source_confs.empty? ? fb : geometric_mean(source_confs)
+            fb = settings[:gas][:fallback_confidence]
+            geo_mean = source_confs.empty? ? fb : gas_geometric_mean(source_confs)
 
             {
               content:        item[:content] || item['content'],
               content_type:   (item[:content_type] || item['content_type'] || 'inference').to_sym,
               status:         :candidate,
-              confidence:     [geo_mean, synthesis_confidence_cap].min,
+              confidence:     [geo_mean, settings[:gas][:synthesis_confidence_cap]].min,
               source_indices: source_indices
             }
           end
 
-          def geometric_mean(values)
+          def gas_geometric_mean(values)
             return 0.0 if values.empty?
 
             product = values.reduce(1.0) { |acc, v| acc * v }
             product**(1.0 / values.length)
           end
 
-          def llm_anticipate(facts)
+          def gas_llm_anticipate(facts)
             facts_text = facts.map { |f| "(#{f[:content_type]}) #{f[:content]}" }.join("\n")
 
             prompt = <<~PROMPT
@@ -426,7 +388,7 @@ module Legion
               Return JSON with a "questions" array of question strings.
             PROMPT
 
-            result = Legion::LLM::Pipeline::GaiaCaller.structured(
+            result = Legion::LLM::Inference::GaiaCaller.structured(
               message: prompt.strip,
               schema:  {
                 type:       :object,
@@ -442,45 +404,35 @@ module Legion
                           result[:data][:questions] || result.dig(:data, 'questions') || []
                         else
                           content = result.respond_to?(:message) ? result.message[:content] : result.to_s
-                          parsed = json_load(content)
+                          parsed = json_parse(content)
                           parsed.is_a?(Hash) ? (parsed[:questions] || parsed['questions'] || []) : []
                         end
-            questions = questions.first(max_anticipations)
+            questions = questions.first(settings[:gas][:max_anticipations])
 
             questions.map do |q|
-              promote_to_pattern_store(question: q, facts: facts)
+              gas_promote_to_pattern_store(question: q, facts: facts)
               { question: q }
             end
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'apollo.gas.llm_anticipate')
-            []
           end
 
-          def promote_to_pattern_store(question:, facts:)
+          def gas_promote_to_pattern_store(question:, facts:)
             return unless defined?(Legion::Extensions::Agentic::TBI::PatternStore)
 
             Legion::Extensions::Agentic::TBI::PatternStore.promote_candidate(
               intent:     question,
               resolution: { source: 'gas_anticipate', facts: facts.map { |f| f[:content] } },
-              confidence: fallback_confidence
+              confidence: settings[:gas][:fallback_confidence]
             )
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'apollo.gas.promote_to_pattern_store')
             nil
           end
 
-          def llm_available?
-            defined?(Legion::LLM::Pipeline::GaiaCaller)
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'apollo.gas.llm_available')
-            false
-          end
-
-          def mechanical_comprehend(_messages, response)
+          def gas_mechanical_comprehend(_messages, response)
             [{ content: response, content_type: :observation }]
           end
 
-          def llm_comprehend(messages, response)
+          def gas_llm_comprehend(messages, response)
             prompt = <<~PROMPT
               Extract distinct facts from this exchange. Return JSON array of {content:, content_type:} where content_type is one of: fact, concept, procedure, association.
 
@@ -488,7 +440,7 @@ module Legion
               Assistant: #{response}
             PROMPT
 
-            result = Legion::LLM::Pipeline::GaiaCaller.structured(
+            result = Legion::LLM::Inference::GaiaCaller.structured(
               message: prompt.strip,
               schema:  {
                 type:       :object,
@@ -514,7 +466,7 @@ module Legion
                             result[:data][:facts] || result.dig(:data, 'facts') || []
                           else
                             content = result.respond_to?(:message) ? result.message[:content] : result.to_s
-                            parsed = json_load(content)
+                            parsed = json_parse(content)
                             parsed.is_a?(Hash) ? (parsed[:facts] || parsed['facts'] || []) : Array(parsed)
                           end
             facts_array.map do |f|
@@ -523,9 +475,6 @@ module Legion
                 content_type: (f[:content_type] || f['content_type'] || 'fact').to_sym
               }
             end
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'apollo.gas.llm_comprehend')
-            mechanical_comprehend(messages, response)
           end
         end
       end

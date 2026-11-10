@@ -14,8 +14,12 @@
 - Repair the writeback vectorizer's actual subscription receiver, reject failed generation/ingestion/publication, preserve source context and embedding provenance, and discard inbound routing metadata before forwarding to the store queue. Mandatory returns and bounded publisher confirms reach retry handling.
 - Support SQLite JSON vectors/tags/provenance and native PostgreSQL vectors with portable traversal and SQLite decay; keep native entry IDs and matching query filters on both backends.
 - Enforce embedding-space, model/revision, dimension, paired-prefix, and normalization compatibility before similarity, corroboration, or contradiction checks. Decode native PostgreSQL JSONB provenance and regenerate unknown legacy/precomputed document vectors instead of fabricating model identity.
-- Dispatch GAS deposits and semantic lookups through callable Knowledge hosts rather than nonexistent module singleton methods.
+- Dispatch GAS deposits and semantic lookups through callable Knowledge runner methods.
 - Resolve unpublished companion dependencies before PR checks install the bundle, using exact commits and automatically returning to published gems when available. Preserve both Ruby test versions, full lint/security checks, and uploaded RSpec results without lowering runtime dependency floors.
+- Keep actors limited to scheduling and delivery management; move expertise aggregation, entity-watchdog scanning, and contradiction workflows into runners, and keep utility helpers private and concern-prefixed.
+- Reject failed ingest and writeback-store deliveries into bounded retries and dead-lettering instead of acknowledging unsuccessful runner results. Preserve correlated RPC retries without depending on the host task dispatcher's success envelope.
+- Return explicit failures for unavailable models, semantic embedding errors, and failed GAS phases instead of reporting empty successful results. Read watchdog text from `TaskLog.entry`, retain failed texts for retry, and report accepted partial publications.
+- Count distinct agents in expertise coverage and retain separate agent/domain groups even when identifiers contain colons.
 
 ### Added
 - Add bounded `Maintenance.reembed_entries` for legacy backfill and model/dimension migration, with resumable cursors, truthful partial failures, and unchanged content/hash/ownership/status.
@@ -25,6 +29,7 @@
 - Use keyword-only arguments for Apollo-owned methods changed in this release and discard unused keywords with `**`; preserve required positional framework callbacks while dropping extra keywords before superclass dispatch.
 - Require `legion-data >= 1.10.29` (migration 139) and `legion-llm >= 0.16.10` for ownership-scoped hash uniqueness and durable embedding provenance. The original content hash remains unchanged; published mainline migrations 137 and 138 remain untouched.
 - Embedding routing remains solely owned by `legion-llm`; remove obsolete Apollo provider/model settings. Core-client legacy wire migration and synchronous remote retrieval remain outside this server release.
+- Load standalone runners with their declared native dependencies, without adding LegionIO as a runtime or development dependency. Preserve the existing writeback helper entry points until their separate caller migration.
 
 ## [0.4.44] - 2026-10-30
 

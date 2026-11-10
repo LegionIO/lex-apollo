@@ -1,13 +1,16 @@
 # frozen_string_literal: true
 
 require 'legion/extensions/actors/subscription'
-require_relative '../runners/query_response'
+require 'legion/extensions/apollo/runners/query_response'
+require 'legion/extensions/apollo/transport/subscription_delivery'
 
 module Legion
   module Extensions
     module Apollo
       module Actor
         class QueryResponder < Legion::Extensions::Actors::Subscription
+          include Legion::Extensions::Apollo::Transport::SubscriptionDelivery
+
           def runner_class    = Legion::Extensions::Apollo::Runners::QueryResponse
           def runner_function = 'handle_request'
           def use_runner?     = false
@@ -19,14 +22,6 @@ module Legion
               request[:reply_to] = metadata.reply_to if metadata.respond_to?(:reply_to) && metadata.reply_to
               request[:correlation_id] = metadata.correlation_id if metadata.respond_to?(:correlation_id) && metadata.correlation_id
             end
-          end
-
-          def enabled? # rubocop:disable Legion/Extension/ActorEnabledSideEffects
-            defined?(Legion::Extensions::Apollo::Runners::Knowledge) &&
-              Legion.const_defined?(:Transport, false)
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'apollo.query_responder.enabled')
-            false
           end
 
           private

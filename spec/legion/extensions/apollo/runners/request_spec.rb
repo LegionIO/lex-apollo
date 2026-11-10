@@ -11,9 +11,6 @@ require 'legion/extensions/apollo/runners/request'
 
 RSpec.describe Legion::Extensions::Apollo::Runners::Request do
   before do
-    # Clear cached knowledge_host between examples
-    described_class.instance_variable_set(:@knowledge_host, nil)
-
     embeddings_mod = Module.new do
       def self.generate(task: :document, **)
         ApolloSpecEmbedding.result(task: task)
@@ -175,7 +172,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Request do
 
     context 'when neither local nor transport is available' do
       before do
-        hide_const('Legion::Data::Model::ApolloEntry') if defined?(Legion::Data::Model::ApolloEntry)
+        hide_const('Legion::Data::Model::Apollo::Entry') if defined?(Legion::Data::Model::Apollo::Entry)
         hide_const('Legion::Transport') if defined?(Legion::Transport)
       end
 
@@ -190,7 +187,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Request do
   describe '.retrieve' do
     context 'when neither path is available' do
       before do
-        hide_const('Legion::Data::Model::ApolloEntry') if defined?(Legion::Data::Model::ApolloEntry)
+        hide_const('Legion::Data::Model::Apollo::Entry') if defined?(Legion::Data::Model::Apollo::Entry)
         hide_const('Legion::Transport') if defined?(Legion::Transport)
       end
 
@@ -205,7 +202,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Request do
   describe '.ingest' do
     context 'when neither path is available' do
       before do
-        hide_const('Legion::Data::Model::ApolloEntry') if defined?(Legion::Data::Model::ApolloEntry)
+        hide_const('Legion::Data::Model::Apollo::Entry') if defined?(Legion::Data::Model::Apollo::Entry)
         hide_const('Legion::Transport') if defined?(Legion::Transport)
       end
 
@@ -220,7 +217,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Request do
   describe '.traverse' do
     context 'when neither path is available' do
       before do
-        hide_const('Legion::Data::Model::ApolloEntry') if defined?(Legion::Data::Model::ApolloEntry)
+        hide_const('Legion::Data::Model::Apollo::Entry') if defined?(Legion::Data::Model::Apollo::Entry)
         hide_const('Legion::Transport') if defined?(Legion::Transport)
       end
 

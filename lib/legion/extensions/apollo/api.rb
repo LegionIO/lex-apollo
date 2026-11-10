@@ -10,12 +10,14 @@ module Legion
     module Apollo
       class Api < Sinatra::Base
         set :host_authorization, permitted: :any
+        include Legion::Extensions::Apollo::Helpers::DataModels
+        extend Legion::Extensions::Apollo::Helpers::DataModels
 
         class << self
           def stats_payload(now: Time.now)
-            return { error: 'apollo_data_not_available' } unless Helpers::DataModels.apollo_entry_available?
+            return { error: 'apollo_data_not_available' } if data_model_entry.nil?
 
-            entries = Helpers::DataModels.apollo_entry
+            entries = data_model_entry
             by_status = grouped_counts(entries, :status)
             by_status['active'] = entries.exclude(status: 'archived').count
 
@@ -26,7 +28,7 @@ module Legion
               by_status:       by_status,
               by_content_type: grouped_counts(entries, :content_type)
             }
-            stats[:total_relations] = Helpers::DataModels.apollo_relation.count if Helpers::DataModels.apollo_relation_available?
+            stats[:total_relations] = data_model_relation.count unless data_model_relation.nil?
             stats
           end
 
@@ -99,25 +101,17 @@ module Legion
 
         helpers do
           def runner
-            @runner ||= begin
-              obj = Object.new
-              obj.extend(Runners::Knowledge)
-              obj
-            end
+            Legion::Extensions::Apollo::Runners::Knowledge
           end
 
           def expertise_runner
-            @expertise_runner ||= begin
-              obj = Object.new
-              obj.extend(Runners::Expertise)
-              obj
-            end
+            Legion::Extensions::Apollo::Runners::Expertise
           end
         end
 
         # Health check
         get '/api/apollo/health' do
-          available = Helpers::DataModels.apollo_entry_available?
+          available = !data_model_entry.nil?
           json_dump({ status: available ? 'ok' : 'degraded', data_available: available })
         end
 

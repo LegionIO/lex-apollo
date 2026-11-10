@@ -1,84 +1,75 @@
 # frozen_string_literal: true
 
-require_relative '../helpers/data_models'
-
+require 'legion/transport'
+require 'legion/extensions/apollo/transport/messages/query'
+require 'legion/extensions/apollo/transport/messages/ingest'
+require 'legion/extensions/apollo/helpers/data_models'
+require 'legion/extensions/apollo/runners/knowledge'
 module Legion
   module Extensions
     module Apollo
       module Runners
         module Request
+          include Legion::Settings::Helper
           include Legion::Logging::Helper
-          include Legion::Transport::Helper if defined?(Legion::Transport::Helper)
-          extend Legion::Logging::Helper
+          include Legion::Transport::Helper
+          extend Legion::Extensions::Apollo::Helpers::DataModels
           extend self
 
           def self.data_required?
             false
           end
 
-          def query(text:, limit: Helpers::GraphQuery.default_query_limit, min_confidence: Helpers::GraphQuery.default_query_min_confidence, tags: nil,
+          def query(text:, limit: settings[:query][:default_limit], min_confidence: settings[:query][:default_min_confidence], tags: nil,
                     domain: nil, agent_id: 'unknown', **)
-            if local_service_available?
-              knowledge_host.handle_query(query: text, limit: limit, min_confidence: min_confidence,
-                                          tags: tags, domain: domain, agent_id: agent_id, **)
-            elsif transport_available?
-              publish_query(action: :query, query: text, limit: limit, min_confidence: min_confidence,
-                            tags: tags, domain: domain, agent_id: agent_id, **)
+            if data_model_entry
+              Legion::Extensions::Apollo::Runners::Knowledge.handle_query(query: text, limit: limit, min_confidence: min_confidence,
+                                                                          tags: tags, domain: domain, agent_id: agent_id, **)
+            elsif transport_session_open?
+              request_publish_query(action: :query, query: text, limit: limit, min_confidence: min_confidence,
+                                    tags: tags, domain: domain, agent_id: agent_id, **)
             else
               { success: false, error: :no_path_available }
             end
           end
 
-          def retrieve(text:, limit: 5, min_confidence: Helpers::GraphQuery.default_query_min_confidence, tags: nil, domain: nil, **)
-            if local_service_available?
-              knowledge_host.retrieve_relevant(query: text, limit: limit, min_confidence: min_confidence,
-                                               tags: tags, domain: domain, **)
-            elsif transport_available?
-              publish_query(action: :retrieve, query: text, limit: limit, min_confidence: min_confidence,
-                            tags: tags, domain: domain, **)
+          def retrieve(text:, limit: 5, min_confidence: settings[:query][:default_min_confidence], tags: nil, domain: nil, **)
+            if data_model_entry
+              Legion::Extensions::Apollo::Runners::Knowledge.retrieve_relevant(query: text, limit: limit, min_confidence: min_confidence,
+                                                                               tags: tags, domain: domain, **)
+            elsif transport_session_open?
+              request_publish_query(action: :retrieve, query: text, limit: limit, min_confidence: min_confidence,
+                                    tags: tags, domain: domain, **)
             else
               { success: false, error: :no_path_available }
             end
           end
 
           def ingest(content:, content_type:, tags: [], source_agent: 'unknown', **options)
-            if local_service_available?
-              knowledge_host.handle_ingest(content: content, content_type: content_type,
-                                           tags: tags, source_agent: source_agent, **options)
-            elsif transport_available?
-              publish_ingest(**request_process_identity(options: options), content: content, content_type: content_type,
+            if data_model_entry
+              Legion::Extensions::Apollo::Runners::Knowledge.handle_ingest(content: content, content_type: content_type,
                                                                            tags: tags, source_agent: source_agent, **options)
+            elsif transport_session_open?
+              request_publish_ingest(**request_process_identity(options: options), content: content, content_type: content_type,
+                                                                                   tags: tags, source_agent: source_agent, **options)
             else
               { success: false, error: :no_path_available }
             end
           end
 
-          def traverse(entry_id:, depth: Helpers::GraphQuery.default_depth, relation_types: nil, agent_id: 'unknown', **)
-            if local_service_available?
-              knowledge_host.handle_traverse(entry_id: entry_id, depth: depth,
-                                             relation_types: relation_types, agent_id: agent_id, **)
-            elsif transport_available?
-              publish_query(action: :traverse, entry_id: entry_id, depth: depth,
-                            relation_types: relation_types, agent_id: agent_id, **)
+          def traverse(entry_id:, depth: settings[:graph][:default_depth], relation_types: nil, agent_id: 'unknown', **)
+            if data_model_entry
+              Legion::Extensions::Apollo::Runners::Knowledge.handle_traverse(entry_id: entry_id, depth: depth,
+                                                                             relation_types: relation_types, agent_id: agent_id, **)
+            elsif transport_session_open?
+              request_publish_query(action: :traverse, entry_id: entry_id, depth: depth,
+                                    relation_types: relation_types, agent_id: agent_id, **)
             else
               { success: false, error: :no_path_available }
             end
           end
 
           private
-
-          def knowledge_host
-            @knowledge_host ||= Object.new.extend(Legion::Extensions::Apollo::Runners::Knowledge)
-          end
-
-          def local_service_available?
-            Helpers::DataModels.apollo_entry_available? &&
-              defined?(Knowledge)
-          end
-
-          def transport_available?
-            defined?(Legion::Transport::Connection) && transport_session_open?
-          end
 
           def request_process_identity(options:, **)
             return {} if options.key?(:identity_principal_id)
@@ -94,16 +85,16 @@ module Legion
             raise
           end
 
-          def publish_query(**payload)
-            Legion::Extensions::Apollo::Transport::Messages::Query.new(**payload).publish
+          def request_publish_query(**payload)
+            Legion::Extensions::Apollo::Transport::Messages::Query.new(**payload).publish!
             { success: true, dispatched: :transport, payload: payload }
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'apollo.request.publish_query')
             { success: false, error: e.message }
           end
 
-          def publish_ingest(**payload)
-            Legion::Extensions::Apollo::Transport::Messages::Ingest.new(**payload).publish
+          def request_publish_ingest(**payload)
+            Legion::Extensions::Apollo::Transport::Messages::Ingest.new(**payload).publish!
             { success: true, dispatched: :transport, payload: payload }
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'apollo.request.publish_ingest')

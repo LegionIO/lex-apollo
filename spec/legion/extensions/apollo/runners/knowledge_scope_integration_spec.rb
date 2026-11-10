@@ -66,7 +66,7 @@ RSpec.describe 'Apollo knowledge access boundaries' do
       [{ principal_id: 42, group_id: 5 }, { principal_id: 77, group_id: 5 }, { principal_id: 88, group_id: 6 }].each do |row|
         db[:identity_group_memberships].insert(row)
       end
-      runner = Object.new.extend(Legion::Extensions::Apollo::Runners::Knowledge)
+      runner = Legion::Extensions::Apollo::Runners::Knowledge
       input = ::JSON.parse($stdin.read, symbolize_names: true)
       result = case input[:action]
                when 'browse'

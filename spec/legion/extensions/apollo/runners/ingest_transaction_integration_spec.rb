@@ -70,7 +70,7 @@ RSpec.describe 'Apollo ingest transaction' do
       generated = []
       Legion::LLM::Call::Embeddings.define_singleton_method(:generate) do |text:, task:, **|
         generated << { text: text, task: task }
-        raise 'embedding provider unavailable' if input[:generation_error]
+        raise Legion::LLM::LLMError, 'embedding provider unavailable' if input[:generation_error]
 
         ApolloSpecEmbedding.result(task: task)
       end
@@ -100,7 +100,7 @@ RSpec.describe 'Apollo ingest transaction' do
         db[:apollo_entries].insert(existing)
       end
       before = db[:apollo_entries].all
-      runner = Object.new.extend(Legion::Extensions::Apollo::Runners::Knowledge)
+      runner = Legion::Extensions::Apollo::Runners::Knowledge
       result = runner.handle_ingest(
         content: input[:content], content_type: :fact, source_agent: input[:source_agent], embedding: nil, **input.fetch(:options, {})
       )

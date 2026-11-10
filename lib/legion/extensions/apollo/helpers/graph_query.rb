@@ -5,25 +5,12 @@ module Legion
     module Apollo
       module Helpers
         module GraphQuery
-          extend Legion::Settings::Helper
+          private
 
-          SPREAD_FACTOR = 0.6
-          DEFAULT_DEPTH = 2
-          MIN_ACTIVATION = 0.1
-
-          module_function
-
-          def spread_factor  = settings[:graph][:spread_factor]
-          def default_depth  = settings[:graph][:default_depth]
-          def min_activation = settings[:graph][:min_activation]
-
-          def default_query_limit          = settings[:query][:default_limit]
-          def default_query_min_confidence = settings[:query][:default_min_confidence]
-
-          def build_traversal_sql(relation_types: nil, requesting_principal_id: nil, **)
+          def graph_build_traversal_sql(relation_types: nil, requesting_principal_id: nil, **)
             type_filter = relation_types&.any? ? 'AND r.relation_type IN :relation_types' : ''
             visibility = if requesting_principal_id
-                           "AND #{access_scope_sql(qualified: true, global_only: requesting_principal_id.zero?)}"
+                           "AND #{graph_access_scope_sql(qualified: true, global_only: requesting_principal_id.zero?)}"
                          else
                            ''
                          end
@@ -58,16 +45,16 @@ module Legion
             SQL
           end
 
-          def build_semantic_search_sql(adapter: :postgres, **filters)
+          def graph_build_semantic_search_sql(adapter: :postgres, **filters)
             raise ArgumentError, "unsupported Apollo adapter: #{adapter}" unless %i[postgres sqlite].include?(adapter)
 
-            conditions = adapter == :postgres ? semantic_postgres_conditions(**filters) : semantic_sqlite_conditions(**filters)
+            conditions = adapter == :postgres ? graph_semantic_postgres_conditions(**filters) : graph_semantic_sqlite_conditions(**filters)
             conditions.push('e.confidence >= :min_confidence', 'e.embedding IS NOT NULL')
             conditions << 'e.embedding_space_id = :embedding_space_id' if filters[:embedding_space_id]
             conditions << 'e.embedding_dimensions = :embedding_dimensions' if filters[:embedding_dimensions]
             conditions << 'e.knowledge_domain = :domain' if filters[:domain]
             principal = filters[:requesting_principal_id]
-            conditions << access_scope_sql(qualified: true, global_only: principal.zero?) if principal
+            conditions << graph_access_scope_sql(qualified: true, global_only: principal.zero?) if principal
             if filters[:access_scope]
               conditions << 'e.access_scope = :access_scope'
               if filters[:access_scope].to_s != 'global'
@@ -100,8 +87,8 @@ module Legion
             SQL
           end
 
-          def semantic_postgres_conditions(embedding_dimensions: nil, embedding_identity_source: nil,
-                                           statuses: nil, tags: nil, tag_match: :any, exclude_source_agents: [], **)
+          def graph_semantic_postgres_conditions(embedding_dimensions: nil, embedding_identity_source: nil,
+                                                 statuses: nil, tags: nil, tag_match: :any, exclude_source_agents: [], **)
             conditions = []
             conditions << 'vector_dims(e.embedding) = :embedding_dimensions' if embedding_dimensions
             if embedding_identity_source
@@ -117,18 +104,16 @@ module Legion
             conditions << '(e.source_agent IS NULL OR NOT (e.source_agent = ANY(CAST(:exclude_source_agents AS text[]))))' if exclude_source_agents&.any?
             conditions
           end
-          private_class_method :semantic_postgres_conditions
 
-          def semantic_sqlite_conditions(statuses: nil, tags: nil, tag_match: :any, exclude_source_agents: [], **)
+          def graph_semantic_sqlite_conditions(statuses: nil, tags: nil, tag_match: :any, exclude_source_agents: [], **)
             conditions = []
             conditions << 'e.status IN (SELECT value FROM json_each(:statuses))' if statuses&.any?
             if tags&.any?
-              tag_values = "CASE WHEN json_valid(e.tags) THEN e.tags ELSE '[]' END"
               conditions << if tag_match.to_s == 'all'
                               'NOT EXISTS (SELECT 1 FROM json_each(:tags) wanted WHERE NOT EXISTS ' \
-                                "(SELECT 1 FROM json_each(#{tag_values}) stored WHERE stored.value = wanted.value))"
+                                '(SELECT 1 FROM json_each(e.tags) stored WHERE stored.value = wanted.value))'
                             else
-                              "EXISTS (SELECT 1 FROM json_each(#{tag_values}) stored " \
+                              'EXISTS (SELECT 1 FROM json_each(e.tags) stored ' \
                                 'WHERE stored.value IN (SELECT value FROM json_each(:tags)))'
                             end
             end
@@ -137,9 +122,8 @@ module Legion
             end
             conditions
           end
-          private_class_method :semantic_sqlite_conditions
 
-          def access_scope_sql(qualified: false, global_only: false, **)
+          def graph_access_scope_sql(qualified: false, global_only: false, **)
             prefix = qualified ? 'e.' : ''
             return "#{prefix}access_scope = 'global'" if global_only
 

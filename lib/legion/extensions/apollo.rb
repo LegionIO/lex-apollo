@@ -3,6 +3,7 @@
 require 'legion/logging'
 require 'legion/settings'
 require 'legion/json'
+require 'legion/transport'
 require 'legion/extensions/apollo/version'
 require 'legion/extensions/apollo/helpers/confidence'
 require 'legion/extensions/apollo/helpers/similarity'
@@ -18,24 +19,25 @@ require 'legion/extensions/apollo/runners/writeback'
 require 'legion/extensions/apollo/runners/expertise'
 require 'legion/extensions/apollo/runners/maintenance'
 require 'legion/extensions/apollo/runners/entity_extractor'
+require 'legion/extensions/apollo/runners/embedding'
+require 'legion/extensions/apollo/runners/search'
+require 'legion/extensions/apollo/runners/entity_watchdog'
+require 'legion/extensions/apollo/runners/contradictions'
 require 'legion/extensions/apollo/runners/gas'
 require 'legion/extensions/apollo/runners/request'
 require 'legion/extensions/apollo/runners/query_response'
-
 require 'legion/extensions/apollo/api' if defined?(Sinatra)
 
-if Legion.const_defined?(:Transport, false)
-  require 'legion/extensions/apollo/transport/exchanges/apollo'
-  require 'legion/extensions/apollo/transport/exchanges/llm_audit'
-  require 'legion/extensions/apollo/transport/queues/ingest'
-  require 'legion/extensions/apollo/transport/queues/query'
-  require 'legion/extensions/apollo/transport/queues/gas'
-  require 'legion/extensions/apollo/transport/messages/ingest'
-  require 'legion/extensions/apollo/transport/messages/query'
-  require 'legion/extensions/apollo/transport/messages/writeback'
-  require 'legion/extensions/apollo/transport/queues/writeback_store'
-  require 'legion/extensions/apollo/transport/queues/writeback_vectorize'
-end
+require 'legion/extensions/apollo/transport/exchanges/apollo'
+require 'legion/extensions/apollo/transport/exchanges/llm_audit'
+require 'legion/extensions/apollo/transport/queues/ingest'
+require 'legion/extensions/apollo/transport/queues/query'
+require 'legion/extensions/apollo/transport/queues/gas'
+require 'legion/extensions/apollo/transport/messages/ingest'
+require 'legion/extensions/apollo/transport/messages/query'
+require 'legion/extensions/apollo/transport/messages/writeback'
+require 'legion/extensions/apollo/transport/queues/writeback_store'
+require 'legion/extensions/apollo/transport/queues/writeback_vectorize'
 
 module Legion
   module Extensions
@@ -89,7 +91,8 @@ module Legion
             enabled:              false,
             similar_limit:        10,
             similarity_threshold: 0.7,
-            relation_weight:      0.8
+            relation_weight:      0.8,
+            max_content_chars:    4000
           },
           corroboration:       {
             relation_weight:      1.0,
@@ -102,7 +105,8 @@ module Legion
             proficiency_cap:     1.0
           },
           entity_extractor:    {
-            min_confidence: 0.7
+            min_confidence: 0.7,
+            types:          %w[person service repository concept]
           },
           entity_watchdog:     {
             concept_keywords:      [],
@@ -124,7 +128,8 @@ module Legion
           },
           writeback:           {
             enabled:            true,
-            min_content_length: 50
+            min_content_length: 50,
+            max_content_length: 4000
           },
           actors:              {
             decay_interval:           3600,
@@ -138,6 +143,3 @@ module Legion
     end
   end
 end
-
-# Entity watchdog runs as Actor::EntityWatchdog (Every actor, 120s interval).
-# PhaseWiring.register_handler was removed — the watchdog scans task logs independently.

@@ -63,8 +63,9 @@ RSpec.describe 'Apollo GAS relation persistence' do
           embedding_provenance: ::JSON.generate(embedding[:embedding_provenance])
         ))
       end
-      result = Legion::Extensions::Apollo::Runners::Gas.phase_deposit(
-        facts: input[:facts], relations: input[:relations], synthesis: [], audit_event: { request_id: 'gas-regression' }
+      result = Legion::Extensions::Apollo::Runners::Gas.send(
+        :gas_phase_deposit, facts: input[:facts], relations: input[:relations], synthesis: [],
+        audit_event: { request_id: 'gas-regression' }
       )
       puts "APOLLO_RESULT=#{::JSON.generate(result: result, relations: db[:apollo_relations].all)}"
     RUBY

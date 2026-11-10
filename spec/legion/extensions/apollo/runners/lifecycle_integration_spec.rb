@@ -53,7 +53,7 @@ RSpec.describe 'Apollo service lifecycle mutations' do
       db[:apollo_entries].insert(attributes.merge(id: 5, content: 'already archived', status: 'archived', confidence: 0.7,
                                                  created_at: old))
       input = ::JSON.parse($stdin.read, symbolize_names: true)
-      maintenance = Object.new.extend(Legion::Extensions::Apollo::Runners::Maintenance)
+      maintenance = Legion::Extensions::Apollo::Runners::Maintenance
       case input[:operation]
       when 'deprecate'
         api = Rack::MockRequest.new(Legion::Extensions::Apollo::Api)

@@ -9,23 +9,18 @@ require 'legion/extensions/apollo/helpers/writeback'
 require 'legion/extensions/apollo/runners/knowledge'
 
 RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
-  let(:runner) do
-    obj = Object.new
-    obj.extend(described_class)
-    obj
-  end
+  let(:runner) { described_class }
 
   before do
     hide_const('Legion::Data::Model::Apollo') if defined?(Legion::Data::Model::Apollo)
-    %i[ApolloEntry ApolloRelation ApolloExpertise ApolloAccessLog].each do |name|
-      hide_const("Legion::Data::Model::#{name}") if defined?(Legion::Data::Model) && Legion::Data::Model.const_defined?(name, false)
-    end
+    allow(Legion::Data).to receive(:connection).and_return(nil)
     hide_const('Legion::Identity::Process') if defined?(Legion::Identity::Process)
     stub_const('Legion::LLM::Call::Embeddings', Module.new)
     allow(Legion::LLM::Call::Embeddings).to receive(:generate) do |task: :document, **|
       ApolloSpecEmbedding.result(task: task)
     end
     allow(Legion::Extensions::Apollo).to receive(:settings).and_return(Legion::Extensions::Apollo.default_settings)
+    allow(runner).to receive(:settings).and_return(Legion::Extensions::Apollo.settings)
   end
 
   shared_context 'persisted knowledge' do
@@ -82,9 +77,9 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         Integer :principal_id
         Integer :group_id
       end
-      stub_const('Legion::Data::Model::ApolloEntry', entry_model)
-      stub_const('Legion::Data::Model::ApolloExpertise', Class.new(Sequel::Model(database[:apollo_expertise])))
-      stub_const('Legion::Data::Model::ApolloAccessLog', Class.new(Sequel::Model(database[:apollo_access_logs])))
+      stub_const('Legion::Data::Model::Apollo::Entry', entry_model)
+      stub_const('Legion::Data::Model::Apollo::Expertise', Class.new(Sequel::Model(database[:apollo_expertise])))
+      stub_const('Legion::Data::Model::Apollo::AccessLog', Class.new(Sequel::Model(database[:apollo_access_logs])))
     end
 
     after { database.disconnect }
@@ -205,10 +200,10 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
   end
 
   describe '#handle_ingest' do
-    let(:host) { Object.new.extend(described_class) }
+    let(:host) { runner }
 
     context 'when Apollo data is not available' do
-      before { hide_const('Legion::Data::Model::ApolloEntry') if defined?(Legion::Data::Model::ApolloEntry) }
+      before { hide_const('Legion::Data::Model::Apollo') if defined?(Legion::Data::Model::Apollo) }
 
       it 'returns a structured error' do
         result = host.handle_ingest(content: 'test', content_type: 'fact')
@@ -265,7 +260,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
 
         it 'does not report dedup success or boost confidence when legacy regeneration fails' do
           existing_entry.update(embedding_provenance: nil, embedding_space_id: nil)
-          allow(Legion::LLM::Call::Embeddings).to receive(:generate).and_raise(IOError, 'provider unavailable')
+          allow(Legion::LLM::Call::Embeddings).to receive(:generate).and_raise(Legion::LLM::LLMError, 'provider unavailable')
 
           result = host.handle_ingest(content: 'test', content_hash: 'same-hash')
 
@@ -331,10 +326,10 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
 
     context 'when Sequel raises an error' do
       before do
-        stub_const('Legion::Data::Model::ApolloEntry', Class.new)
-        stub_const('Legion::Data::Model::ApolloExpertise', Class.new)
-        stub_const('Legion::Data::Model::ApolloAccessLog', Class.new)
-        allow(Legion::Data::Model::ApolloEntry).to receive(:where)
+        stub_const('Legion::Data::Model::Apollo::Entry', Class.new)
+        stub_const('Legion::Data::Model::Apollo::Expertise', Class.new)
+        stub_const('Legion::Data::Model::Apollo::AccessLog', Class.new)
+        allow(Legion::Data::Model::Apollo::Entry).to receive(:where)
           .and_raise(Sequel::Error, 'connection lost')
       end
 
@@ -368,36 +363,38 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
     context 'contradiction detection' do
       include_context 'persisted knowledge'
 
+      around do |example|
+        scanner = Legion::Extensions::Apollo::Runners::Contradictions
+        previous_queue = scanner.instance_variable_get(:@contradictions_queue)
+        scanner.instance_variable_set(:@contradictions_queue, Queue.new)
+        example.run
+      ensure
+        scanner.instance_variable_set(:@contradictions_queue, previous_queue)
+      end
+
       it 'returns accepted ingestion without synchronous contradiction results when disabled' do
         expect(host.handle_ingest(content: 'test fact')).to include(success: true, contradictions: [])
       end
 
-      it 'queues only the persisted entry identity when detection is enabled' do
+      it 'makes enabled ingestion available to the asynchronous contradiction scan' do
+        scanner = Legion::Extensions::Apollo::Runners::Contradictions
+        allow(scanner).to receive(:settings).and_return(Legion::Extensions::Apollo.settings)
         Legion::Extensions::Apollo.settings[:contradiction][:enabled] = true
-        scanner = Class.new do
-          def self.enqueue(entry_id:, **)
-            (@pending ||= []) << entry_id
-          end
-
-          def self.pending(**) = @pending || []
-        end
-        stub_const('Legion::Extensions::Apollo::Actor::ContradictionScanner', scanner)
-
         result = host.handle_ingest(content: 'enabled test')
 
         expect(result).to include(success: true, contradictions: [])
-        queued = scanner.pending.map { |entry_id| entry_model[entry_id] }
-        expect(queued.map(&:content)).to eq(['enabled test'])
-        expect(queued.first.id).to eq(result[:entry_id])
+        expect(entry_model[result[:entry_id]].content).to eq('enabled test')
+        expect(scanner.scan_pending_contradictions).to include(success: true, processed: 1, failed: 0)
+        expect(scanner.scan_pending_contradictions).to include(success: true, processed: 0)
       end
     end
   end
 
   describe '#handle_query' do
-    let(:host) { Object.new.extend(described_class) }
+    let(:host) { runner }
 
     context 'when Apollo data is not available' do
-      before { hide_const('Legion::Data::Model::ApolloEntry') if defined?(Legion::Data::Model::ApolloEntry) }
+      before { hide_const('Legion::Data::Model::Apollo') if defined?(Legion::Data::Model::Apollo) }
 
       it 'returns a structured error' do
         result = host.handle_query(query: 'test')
@@ -407,11 +404,10 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
     end
 
     context 'when semantic query access logging is unavailable' do
-      let(:mock_entry_class) { double('ApolloEntry') }
+      let(:mock_entry_class) { double('Apollo::Entry') }
 
       before do
-        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
-        hide_const('Legion::Data::Model::ApolloAccessLog') if defined?(Legion::Data::Model::ApolloAccessLog)
+        stub_const('Legion::Data::Model::Apollo::Entry', mock_entry_class)
         hide_const('Legion::Data::Model::Apollo::AccessLog') if defined?(Legion::Data::Model::Apollo::AccessLog)
       end
 
@@ -426,23 +422,9 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
     end
 
     context 'when Apollo data is available' do
-      let(:mock_entry_class) { double('ApolloEntry') }
-      let(:mock_access_log_class) { double('ApolloAccessLog') }
-      let(:mock_db) { double('db', database_type: :postgres) }
-      let(:sample_entries) do
-        [{ id: 'uuid-1', content: 'Ruby is interpreted', content_type: 'fact',
-           confidence: 0.8, distance: 0.15, tags: ['ruby'], source_agent: 'agent-1',
-           access_count: 3 }]
-      end
+      include_context 'persisted knowledge'
 
-      before do
-        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
-        stub_const('Legion::Data::Model::ApolloAccessLog', mock_access_log_class)
-        allow(mock_entry_class).to receive(:db).and_return(mock_db)
-        allow(mock_db).to receive(:fetch).and_return(double(all: sample_entries))
-        allow(mock_entry_class).to receive(:where).and_return(double(update: true))
-        allow(mock_access_log_class).to receive(:create)
-      end
+      before { persisted_entry }
 
       it 'returns matching entries' do
         result = host.handle_query(query: 'Ruby', agent_id: 'agent-2')
@@ -453,15 +435,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
     end
 
     context 'when no results found' do
-      let(:mock_entry_class) { double('ApolloEntry') }
-      let(:mock_db) { double('db', database_type: :postgres) }
-
-      before do
-        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
-        stub_const('Legion::Data::Model::ApolloAccessLog', Class.new)
-        allow(mock_entry_class).to receive(:db).and_return(mock_db)
-        allow(mock_db).to receive(:fetch).and_return(double(all: []))
-      end
+      include_context 'persisted knowledge'
 
       it 'returns empty entries array' do
         result = host.handle_query(query: 'nonexistent')
@@ -497,11 +471,26 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
           .to contain_exactly(include(id: confirmed.id))
         expect(host.handle_query(query: 'x', tags: ['ruby'], domain: 'clinical')[:entries]).to eq([])
       end
+
+      it 'does not disguise provider failure as browse results' do
+        allow(Legion::LLM::Call::Embeddings).to receive(:generate).and_raise(Legion::LLM::LLMError, 'provider unavailable')
+
+        expect(host.handle_query(query: 'clinical evidence')).to include(success: false, error: 'provider unavailable')
+        expect(candidate.refresh.confidence).to eq(0.8)
+        expect(confirmed.refresh.confidence).to eq(0.8)
+        expect(database[:apollo_access_logs].count).to eq(0)
+      end
+
+      it 'propagates programming errors instead of presenting empty search results' do
+        allow(Legion::LLM::Call::Embeddings).to receive(:generate).and_raise(NoMethodError, 'provider bug')
+
+        expect { host.handle_query(query: 'clinical evidence') }.to raise_error(NoMethodError, 'provider bug')
+      end
     end
   end
 
   describe '#retrieve_relevant' do
-    let(:host) { Object.new.extend(described_class) }
+    let(:host) { runner }
 
     it 'returns skipped when skip is true' do
       result = host.retrieve_relevant(skip: true)
@@ -509,7 +498,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
     end
 
     context 'when Apollo data is not available' do
-      before { hide_const('Legion::Data::Model::ApolloEntry') if defined?(Legion::Data::Model::ApolloEntry) }
+      before { hide_const('Legion::Data::Model::Apollo') if defined?(Legion::Data::Model::Apollo) }
 
       it 'returns a structured error' do
         result = host.retrieve_relevant(query: 'test')
@@ -517,48 +506,45 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
       end
     end
 
-    it 'returns empty when query is nil' do
-      stub_const('Legion::Data::Model::ApolloEntry', Class.new)
-      result = host.retrieve_relevant(query: nil)
-      expect(result[:success]).to be true
-      expect(result[:entries]).to eq([])
-    end
+    context 'with a canonical database' do
+      include_context 'persisted knowledge'
 
-    it 'returns empty when query is blank' do
-      stub_const('Legion::Data::Model::ApolloEntry', Class.new)
-      result = host.retrieve_relevant(query: '  ')
-      expect(result[:success]).to be true
-      expect(result[:entries]).to eq([])
+      it 'returns empty when query is nil' do
+        result = host.retrieve_relevant(query: nil)
+
+        expect(result[:success]).to be true
+        expect(result[:entries]).to eq([])
+      end
+
+      it 'returns empty when query is blank' do
+        result = host.retrieve_relevant(query: '  ')
+
+        expect(result[:success]).to be true
+        expect(result[:entries]).to eq([])
+      end
     end
 
     context 'with valid query and data available' do
-      let(:mock_entry_class) { double('ApolloEntry') }
-      let(:mock_db) { double('db', database_type: :postgres) }
-      let(:sample_entries) do
-        [{ id: 'uuid-1', content: 'fact', content_type: 'fact',
-           confidence: 0.7, distance: 0.2, tags: ['ruby'], source_agent: 'agent-1' }]
-      end
+      include_context 'persisted knowledge'
 
-      before do
-        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
-        allow(mock_entry_class).to receive(:db).and_return(mock_db)
-        allow(mock_db).to receive(:fetch).and_return(double(all: sample_entries))
-        allow(mock_entry_class).to receive(:where).and_return(double(update: true))
-      end
+      let!(:entry) { persisted_entry }
 
       it 'returns entries without access logging' do
         result = host.retrieve_relevant(query: 'Ruby facts')
         expect(result[:success]).to be true
         expect(result[:count]).to eq(1)
+        expect(result[:entries]).to contain_exactly(include(id: entry.id, content: entry.content))
+        expect(database[:apollo_access_logs].count).to eq(0)
+        expect(entry.refresh.confidence).to be > 0.8
       end
     end
   end
 
   describe '#handle_traverse' do
-    let(:host) { Object.new.extend(described_class) }
+    let(:host) { runner }
 
     context 'when Apollo data is not available' do
-      before { hide_const('Legion::Data::Model::ApolloEntry') if defined?(Legion::Data::Model::ApolloEntry) }
+      before { hide_const('Legion::Data::Model::Apollo') if defined?(Legion::Data::Model::Apollo) }
 
       it 'returns a structured error' do
         result = host.handle_traverse(entry_id: 'uuid-123')
@@ -568,8 +554,8 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
     end
 
     context 'when Apollo data is available' do
-      let(:mock_entry_class) { double('ApolloEntry') }
-      let(:mock_access_log_class) { double('ApolloAccessLog') }
+      let(:mock_entry_class) { double('Apollo::Entry') }
+      let(:mock_access_log_class) { double('Apollo::AccessLog') }
       let(:mock_db) { double('db') }
       let(:traversal_results) do
         [{ id: 'uuid-1', content: 'root', content_type: 'fact',
@@ -581,8 +567,8 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
       end
 
       before do
-        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
-        stub_const('Legion::Data::Model::ApolloAccessLog', mock_access_log_class)
+        stub_const('Legion::Data::Model::Apollo::Entry', mock_entry_class)
+        stub_const('Legion::Data::Model::Apollo::AccessLog', mock_access_log_class)
         allow(mock_entry_class).to receive(:db).and_return(mock_db)
         allow(mock_db).to receive(:fetch).and_return(double(all: traversal_results))
         allow(mock_access_log_class).to receive(:create)
@@ -599,8 +585,8 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
 
     context 'when Sequel raises an error' do
       before do
-        stub_const('Legion::Data::Model::ApolloEntry', Class.new)
-        allow(Legion::Data::Model::ApolloEntry).to receive(:db)
+        stub_const('Legion::Data::Model::Apollo::Entry', Class.new)
+        allow(Legion::Data::Model::Apollo::Entry).to receive(:db)
           .and_raise(Sequel::Error, 'connection lost')
       end
 
@@ -613,10 +599,10 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
   end
 
   describe '#redistribute_knowledge' do
-    let(:host) { Object.new.extend(described_class) }
+    let(:host) { runner }
 
     context 'when Apollo data is not available' do
-      before { hide_const('Legion::Data::Model::ApolloEntry') if defined?(Legion::Data::Model::ApolloEntry) }
+      before { hide_const('Legion::Data::Model::Apollo') if defined?(Legion::Data::Model::Apollo) }
 
       it 'returns a structured error' do
         result = host.redistribute_knowledge(agent_id: 'agent-x')
@@ -626,14 +612,7 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
     end
 
     context 'when the departing agent has no confirmed entries' do
-      let(:mock_entry_class) { double('ApolloEntry') }
-
-      before do
-        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
-        chain = double('chain')
-        allow(mock_entry_class).to receive(:where).and_return(chain)
-        allow(chain).to receive(:where).and_return(double(all: []))
-      end
+      include_context 'persisted knowledge'
 
       it 'returns success with zero redistributed' do
         result = host.redistribute_knowledge(agent_id: 'departed-1')
@@ -643,17 +622,18 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
     end
 
     context 'when the departing agent has confirmed entries' do
-      let(:mock_entry_class) { double('ApolloEntry') }
-      let(:mock_entry) do
-        double('entry', content: 'Ruby is fast', content_type: 'fact',
-                        confidence: 0.8, tags: ['ruby'])
-      end
+      include_context 'persisted knowledge'
+
+      let(:stored_traces) { [] }
 
       before do
-        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
-        chain = double('chain')
-        allow(mock_entry_class).to receive(:where).and_return(chain)
-        allow(chain).to receive(:where).and_return(double(all: [mock_entry]))
+        persisted_entry(source_agent: 'departed-2')
+        store = double('trace store')
+        allow(store).to receive(:store) { |trace| stored_traces << trace }
+        stub_const('Legion::Extensions::Agentic::Memory::Trace', Module.new)
+        allow(Legion::Extensions::Agentic::Memory::Trace).to receive(:shared_store).and_return(store)
+        stub_const('Legion::Extensions::Agentic::Memory::Trace::Helpers::Trace', Module.new)
+        allow(Legion::Extensions::Agentic::Memory::Trace::Helpers::Trace).to receive(:new_trace) { |**attributes| attributes }
       end
 
       it 'returns the count of redistributed entries' do
@@ -661,13 +641,22 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
         expect(result[:success]).to be true
         expect(result[:redistributed]).to eq(1)
         expect(result[:agent_id]).to eq('departed-2')
+        expect(stored_traces).to contain_exactly(include(content_payload: include(content: 'Ruby is interpreted', source_agent: 'departed-2')))
+      end
+
+      it 'does not report redistribution when the memory sink is unavailable' do
+        allow(Legion::Extensions::Agentic::Memory::Trace).to receive(:shared_store).and_return(nil)
+
+        expect(host.redistribute_knowledge(agent_id: 'departed-2')).to include(
+          success: false, error: 'memory_trace_not_available', redistributed: 0
+        )
       end
     end
 
     context 'when Sequel raises an error' do
       before do
-        stub_const('Legion::Data::Model::ApolloEntry', Class.new)
-        allow(Legion::Data::Model::ApolloEntry).to receive(:where)
+        stub_const('Legion::Data::Model::Apollo::Entry', Class.new)
+        allow(Legion::Data::Model::Apollo::Entry).to receive(:where)
           .and_raise(Sequel::Error, 'db error')
       end
 
@@ -680,10 +669,10 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
   end
 
   describe '#prepare_mesh_export' do
-    let(:host) { Object.new.extend(described_class) }
+    let(:host) { runner }
 
     context 'when Legion::Data is not available' do
-      before { hide_const('Legion::Data') if defined?(Legion::Data) }
+      before { allow(Legion::Data).to receive(:connection).and_return(nil) }
 
       it 'returns a structured error' do
         result = host.prepare_mesh_export(target_domain: 'clinical_care')
@@ -726,10 +715,10 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
   end
 
   describe '#handle_erasure_request' do
-    let(:host) { Object.new.extend(described_class) }
+    let(:host) { runner }
 
     context 'when Legion::Data is not available' do
-      before { hide_const('Legion::Data') if defined?(Legion::Data) }
+      before { allow(Legion::Data).to receive(:connection).and_return(nil) }
 
       it 'returns zero counts with error' do
         result = host.handle_erasure_request(agent_id: 'agent-dead')
@@ -762,7 +751,6 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
 
     context 'when Sequel raises an error' do
       before do
-        stub_const('Legion::Data', Module.new)
         allow(Legion::Data).to receive(:connection).and_return(double('conn').tap do |c|
           allow(c).to receive(:[]).and_raise(Sequel::Error, 'db gone')
         end)

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/extensions/actors/every'
-require_relative '../runners/maintenance'
+require 'legion/extensions/apollo/runners/maintenance'
 
 module Legion
   module Extensions

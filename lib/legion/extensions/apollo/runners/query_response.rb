@@ -4,15 +4,15 @@ require 'legion/json'
 require 'securerandom'
 require 'timeout'
 require 'legion/transport/helper'
-require_relative 'knowledge'
+require 'legion/extensions/apollo/runners/knowledge'
 
 module Legion
   module Extensions
     module Apollo
       module Runners
         module QueryResponse
-          extend Legion::Logging::Helper
-          extend Legion::Transport::Helper
+          include Legion::Logging::Helper
+          include Legion::Transport::Helper
           extend self
 
           ACTIONS = { 'query' => :handle_query, 'retrieve' => :retrieve_relevant, 'traverse' => :handle_traverse }.freeze
@@ -26,17 +26,13 @@ module Legion
                        { success: false, error: :invalid_request, message: error }
                      else
                        request[:requesting_principal_id] ||= 0
-                       query_response_knowledge.public_send(function, **request)
+                       Legion::Extensions::Apollo::Runners::Knowledge.public_send(function, **request)
                      end
             query_response_publish(result: result, reply_to: reply_to, correlation_id: correlation_id) unless reply_to.nil?
             result
           end
 
           private
-
-          def query_response_knowledge
-            @query_response_knowledge ||= Object.new.extend(Legion::Extensions::Apollo::Runners::Knowledge)
-          end
 
           def query_response_input_error(action:, request:, **)
             input_error = if action.to_s == 'traverse'

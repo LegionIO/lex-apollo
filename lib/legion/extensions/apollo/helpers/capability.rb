@@ -1,63 +1,24 @@
 # frozen_string_literal: true
 
+require 'legion/data'
+require 'legion/llm'
+require 'legion/settings/helper'
+
 module Legion
   module Extensions
     module Apollo
       module Helpers
         module Capability
-          extend Legion::Logging::Helper
-          extend Legion::Settings::Helper
+          include Legion::Settings::Helper
 
-          PRIVILEGE_MUTEX = Mutex.new
+          private
 
-          module_function
-
-          # SSOT gate: the sole selection authority for embeddings is the
-          # router (Call::Embeddings.generate with no provider arg →
-          # Router.next_lane). can_embed? asks the one capability fact that
-          # matches that selection — is there an embedding-type lane the
-          # router can select? — against the same registry lanes the router
-          # reads. Provider-agnostic (no ollama pin, no hardcoded model
-          # list); no parallel settings-based "second domain".
-          def can_embed?
-            return false unless defined?(Legion::LLM) && Legion::LLM.started?
-
-            Legion::LLM.can_embed?
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'apollo.capability.can_embed')
-            false
+          def capability_can_embed?
+            Legion::LLM.started? && Legion::LLM.can_embed?
           end
 
-          def can_write?
-            return false unless apollo_write_enabled?
-            return false unless defined?(Legion::Data) && Legion::Data.connected?
-
-            check_db_write_privilege
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'apollo.capability.can_write')
-            false
-          end
-
-          def apollo_write_enabled?
-            settings[:data][:apollo_write] == true
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'apollo.capability.apollo_write_enabled')
-            false
-          end
-
-          def check_db_write_privilege(**)
-            PRIVILEGE_MUTEX.synchronize do
-              return @apollo_write_privilege unless @apollo_write_privilege.nil?
-
-              @apollo_write_privilege = Legion::Data.can_write?(:apollo_entries)
-            end
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'apollo.capability.check_db_write_privilege')
-            @apollo_write_privilege = false
-          end
-
-          def reset!
-            @apollo_write_privilege = nil
+          def capability_can_write?
+            settings[:data][:apollo_write] == true && Legion::Data.can_write?(:apollo_entries)
           end
         end
       end

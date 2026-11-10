@@ -5,6 +5,15 @@ require 'legion/extensions/apollo/helpers/tag_normalizer'
 require 'legion/extensions/apollo/helpers/writeback'
 
 RSpec.describe Legion::Extensions::Apollo::Helpers::Writeback do
+  let(:settings) { Legion::Extensions::Apollo.default_settings }
+
+  before do
+    settings[:writeback][:enabled] = true
+    settings[:data][:apollo_write] = true
+    allow(described_class).to receive(:settings).and_return(settings)
+    allow(Legion::Extensions::Apollo::Runners::Writeback).to receive(:settings).and_return(settings)
+  end
+
   let(:base_request) do
     double('Request',
            messages: [{ role: 'user', content: 'How does RabbitMQ clustering work?' }],
@@ -18,14 +27,14 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Writeback do
            tool_calls: [])
   end
 
-  describe '.should_capture?' do
+  describe 'research capture eligibility' do
     it 'returns false for short responses' do
       short = double('Response', message: { content: 'yes' }, tool_calls: [])
-      expect(described_class.should_capture?(response: short, enrichments: {})).to be false
+      expect(described_class.send(:writeback_should_capture?, response: short, enrichments: {})).to be false
     end
 
     it 'returns false when no research tools were used' do
-      expect(described_class.should_capture?(response: base_response, enrichments: {})).to be false
+      expect(described_class.send(:writeback_should_capture?, response: base_response, enrichments: {})).to be false
     end
 
     it 'returns true when research tools were used' do
@@ -34,7 +43,7 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Writeback do
                              message:    { content: 'x' * 100 },
                              model:      'claude-sonnet-4-6',
                              tool_calls: [{ name: 'read_file' }])
-      expect(described_class.should_capture?(response: long_response, enrichments: enrichments)).to be true
+      expect(described_class.send(:writeback_should_capture?, response: long_response, enrichments: enrichments)).to be true
     end
 
     it 'returns false for echo chamber (apollo had results, no additional research)' do
@@ -43,7 +52,7 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Writeback do
         'tool_calls'                 => []
       }
       long_response = double('Response', message: { content: 'x' * 100 }, tool_calls: [])
-      expect(described_class.should_capture?(response: long_response, enrichments: enrichments)).to be false
+      expect(described_class.send(:writeback_should_capture?, response: long_response, enrichments: enrichments)).to be false
     end
 
     it 'recognizes canonical research tools represented by typed objects or either hash key style' do
@@ -53,7 +62,7 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Writeback do
                tool_type.new(name: 'search_content'), tool_type.new(name: 'run_command')]
       decisions = tools.map do |tool|
         response = response_type.new(message: { content: 'Independent research findings. ' * 4 }, tools: [tool])
-        described_class.should_capture?(response: response, enrichments: {})
+        described_class.send(:writeback_should_capture?, response: response, enrichments: {})
       end
 
       expect(decisions).to all(be true)
@@ -65,25 +74,24 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Writeback do
         tools:   [Data.define(:name).new(name: 'apollo_query')]
       )
 
-      expect(described_class.should_capture?(response:    response,
-                                             enrichments: { 'rag_context:apollo_results' => { count: 3 } })).to be false
+      expect(described_class.send(:writeback_should_capture?, response:    response,
+                                                              enrichments: { 'rag_context:apollo_results' => { count: 3 } })).to be false
     end
 
     it 'retains research evidence supplied through enrichments when the final response has no tools' do
       response = Data.define(:message, :tools).new(message: { content: 'Completed research findings. ' * 4 }, tools: [])
 
-      expect(described_class.should_capture?(response:    response,
-                                             enrichments: { 'tool_calls' => [{ 'name' => 'read_file' }] })).to be true
+      expect(described_class.send(:writeback_should_capture?, response:    response,
+                                                              enrichments: { 'tool_calls' => [{ 'name' => 'read_file' }] })).to be true
     end
   end
 
-  describe '.build_payload' do
+  describe 'writeback payload preparation' do
     it 'builds payload with identity context' do
-      payload = described_class.build_payload(
-        request:        base_request,
-        response:       base_response,
-        source_channel: 'chat'
-      )
+      payload = described_class.send(:writeback_build_payload,
+                                     request:        base_request,
+                                     response:       base_response,
+                                     source_channel: 'chat')
       expect(payload[:submitted_by]).to eq('user@example.com')
       expect(payload[:source_agent]).to eq('claude-sonnet-4-6')
       expect(payload[:content_type]).to eq('observation')
@@ -94,18 +102,18 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Writeback do
       long_response = double('Response',
                              message: { content: 'x' * 10_000 },
                              model:   'test')
-      payload = described_class.build_payload(request: base_request, response: long_response)
+      payload = described_class.send(:writeback_build_payload, request: base_request, response: long_response)
       expect(payload[:content].length).to be <= 4000
     end
 
     it 'includes content_hash' do
-      payload = described_class.build_payload(request: base_request, response: base_response)
+      payload = described_class.send(:writeback_build_payload, request: base_request, response: base_response)
       expect(payload[:content_hash]).to be_a(String)
       expect(payload[:content_hash].length).to eq(32)
     end
 
     it 'normalizes tags' do
-      payload = described_class.build_payload(request: base_request, response: base_response)
+      payload = described_class.send(:writeback_build_payload, request: base_request, response: base_response)
       expect(payload[:tags]).to all(match(/\A[a-z0-9-]+\z/))
     end
   end
@@ -122,14 +130,15 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Writeback do
       allow(Legion::LLM::Call::Embeddings).to receive(:generate).and_return(
         vector: [0.6, 0.8], provider: 'embed-provider', model: 'embed-model', instance: 'local', dimensions: 2, embedding_provenance: provenance
       )
-      allow(Legion::Extensions::Apollo::Helpers::Capability).to receive(:can_embed?).and_return(true)
-      allow(Legion::Extensions::Apollo::Helpers::Capability).to receive(:can_write?).and_return(true)
+      allow(Legion::LLM).to receive(:started?).and_return(true)
+      allow(Legion::LLM).to receive(:can_embed?).and_return(true)
+      allow(Legion::Data).to receive(:can_write?).with(:apollo_entries).and_return(true)
     end
 
     it 'passes real generated vectors and original context to ingestion' do
       received = []
       knowledge = Module.new do
-        define_method(:handle_ingest) do |**input|
+        define_singleton_method(:handle_ingest) do |**input|
           received << input
           { success: true }
         end
@@ -144,7 +153,7 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Writeback do
 
     it 'propagates rejected ingestion instead of silently switching to an unchecked broker path' do
       knowledge = Module.new do
-        def handle_ingest(**)
+        def self.handle_ingest(**)
           { success: false, error: :rejected }
         end
       end
@@ -159,8 +168,8 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::Writeback do
     end
 
     it 'requires accepted publication when this node cannot generate embeddings' do
-      allow(Legion::Extensions::Apollo::Helpers::Capability).to receive(:can_embed?).and_return(false)
-      message = instance_double(Legion::Extensions::Apollo::Transport::Messages::Writeback, publish: { accepted: false })
+      allow(Legion::LLM).to receive(:can_embed?).and_return(false)
+      message = instance_double(Legion::Extensions::Apollo::Transport::Messages::Writeback, publish!: { accepted: false })
       allow(Legion::Extensions::Apollo::Transport::Messages::Writeback).to receive(:new).and_return(message)
       expect { described_class.evaluate_and_route(request: base_request, response: response) }.to raise_error(IOError)
     end

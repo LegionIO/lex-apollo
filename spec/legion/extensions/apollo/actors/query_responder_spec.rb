@@ -8,7 +8,7 @@ require 'legion/extensions/apollo/actors/query_responder'
 RSpec.describe Legion::Extensions::Apollo::Actor::QueryResponder do
   subject(:actor) { described_class.new }
 
-  let(:payload) { Legion::JSON.dump(action: 'retrieve', query: '') }
+  let(:payload) { Legion::JSON.dump({ action: 'retrieve', query: '' }) }
   let(:delivery) { { routing_key: 'legion.apollo.query' } }
 
   it 'preserves superclass decoding and takes reply routing from AMQP properties over body values' do

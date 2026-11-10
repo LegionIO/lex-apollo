@@ -72,7 +72,7 @@ RSpec.describe 'Apollo corroboration persistence' do
       end
       input[:memberships].each { |membership| db[:identity_group_memberships].insert(membership) }
       input[:identities].each { |identity| db[:identities].insert(identity) }
-      runner = Object.new.extend(Legion::Extensions::Apollo::Runners::Maintenance)
+      runner = Legion::Extensions::Apollo::Runners::Maintenance
       results = Array.new(input[:runs] || 1) { runner.check_corroboration }
       state = { result: results.last, results: results, entries: db[:apollo_entries].order(:id).all,
                 relations: db[:apollo_relations].all }

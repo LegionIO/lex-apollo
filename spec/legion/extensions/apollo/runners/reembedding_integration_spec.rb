@@ -84,7 +84,7 @@ RSpec.describe 'Apollo reembedding and space isolation' do
       selected_profile = input.fetch(:generated_profile, {})
       Legion::LLM::Call::Embeddings.define_singleton_method(:generate) do |text:, task:, **|
         raise 'provider call inside persistence transaction' if db.in_transaction?
-        raise 'provider unavailable for document' if Array(input[:provider_failures]).include?(text)
+        raise Legion::LLM::LLMError, 'provider unavailable for document' if Array(input[:provider_failures]).include?(text)
 
         if task.to_s == 'document' && input[:concurrent_update]
           update = input.delete(:concurrent_update)
@@ -96,10 +96,10 @@ RSpec.describe 'Apollo reembedding and space isolation' do
         ApolloSpecEmbedding.result(task: task, **selected_profile)
       end
       before = db[:apollo_entries].order(:id).all
-      maintenance = Object.new.extend(Legion::Extensions::Apollo::Runners::Maintenance)
+      maintenance = Legion::Extensions::Apollo::Runners::Maintenance
       results = input.fetch(:batches, []).map { |options| maintenance.reembed_entries(**options) }
       persisted = db[:apollo_entries].order(:id).all
-      knowledge = Object.new.extend(Legion::Extensions::Apollo::Runners::Knowledge)
+      knowledge = Legion::Extensions::Apollo::Runners::Knowledge
       queries = input.fetch(:query_profiles, []).map do |profile|
         selected_profile = profile
         knowledge.handle_query(query: 'migration evidence', requesting_principal_id: 42, min_confidence: 0.0)

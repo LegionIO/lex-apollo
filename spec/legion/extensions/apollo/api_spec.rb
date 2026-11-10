@@ -10,8 +10,8 @@ require 'legion/extensions/apollo/api'
 
 RSpec.describe Legion::Extensions::Apollo::Api do
   describe '.stats_payload' do
-    let(:entry_model) { class_double('Legion::Data::Model::ApolloEntry') }
-    let(:relation_model) { class_double('Legion::Data::Model::ApolloRelation', count: 4) }
+    let(:entry_model) { class_double('Legion::Data::Model::Apollo::Entry') }
+    let(:relation_model) { class_double('Legion::Data::Model::Apollo::Relation', count: 4) }
     let(:status_counts) do
       instance_double(
         'StatusCounts',
@@ -35,8 +35,8 @@ RSpec.describe Legion::Extensions::Apollo::Api do
     let(:recent_entries) { instance_double('RecentEntries', count: 2) }
 
     before do
-      stub_const('Legion::Data::Model::ApolloEntry', entry_model)
-      stub_const('Legion::Data::Model::ApolloRelation', relation_model)
+      stub_const('Legion::Data::Model::Apollo::Entry', entry_model)
+      stub_const('Legion::Data::Model::Apollo::Relation', relation_model)
       allow(entry_model).to receive(:count).and_return(6)
       allow(entry_model).to receive(:avg).with(:confidence).and_return(0.81234)
       allow(entry_model).to receive(:exclude).with(status: 'archived').and_return(active_entries)
@@ -67,7 +67,6 @@ RSpec.describe Legion::Extensions::Apollo::Api do
     end
 
     it 'keeps entry statistics available when the optional relation model is absent' do
-      hide_const('Legion::Data::Model::ApolloRelation') if defined?(Legion::Data::Model::ApolloRelation)
       hide_const('Legion::Data::Model::Apollo::Relation') if defined?(Legion::Data::Model::Apollo::Relation)
 
       payload = described_class.stats_payload(now: Time.utc(2026, 4, 28, 12, 0, 0))
@@ -78,8 +77,8 @@ RSpec.describe Legion::Extensions::Apollo::Api do
 
     context 'when legion-data exposes namespaced Apollo models' do
       before do
-        hide_const('Legion::Data::Model::ApolloEntry') if defined?(Legion::Data::Model::ApolloEntry)
-        hide_const('Legion::Data::Model::ApolloRelation') if defined?(Legion::Data::Model::ApolloRelation)
+        hide_const('Legion::Data::Model::Apollo::Entry') if defined?(Legion::Data::Model::Apollo::Entry)
+        hide_const('Legion::Data::Model::Apollo::Relation') if defined?(Legion::Data::Model::Apollo::Relation)
         stub_const('Legion::Data::Model::Apollo::Entry', entry_model)
         stub_const('Legion::Data::Model::Apollo::Relation', relation_model)
       end
@@ -97,7 +96,7 @@ RSpec.describe Legion::Extensions::Apollo::Api do
     end
 
     it 'returns an apollo data error when the entry model is unavailable' do
-      hide_const('Legion::Data::Model::ApolloEntry')
+      hide_const('Legion::Data::Model::Apollo::Entry')
 
       expect(described_class.stats_payload).to eq(error: 'apollo_data_not_available')
     end

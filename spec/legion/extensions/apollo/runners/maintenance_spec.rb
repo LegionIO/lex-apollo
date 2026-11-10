@@ -6,10 +6,11 @@ require 'legion/extensions/apollo/helpers/similarity'
 require 'legion/extensions/apollo/runners/maintenance'
 
 RSpec.describe Legion::Extensions::Apollo::Runners::Maintenance do
-  let(:runner) do
-    obj = Object.new
-    obj.extend(described_class)
-    obj
+  let(:runner) { described_class }
+
+  before do
+    hide_const('Legion::Data::Model::Apollo') if defined?(Legion::Data::Model::Apollo)
+    allow(runner).to receive(:settings).and_return(Legion::Extensions::Apollo.settings)
   end
 
   it 'retains client action envelopes without claiming completed service mutations when data is unavailable' do
@@ -21,15 +22,14 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Maintenance do
   end
 
   describe '#run_decay_cycle' do
-    let(:host) { Object.new.extend(described_class) }
+    let(:host) { runner }
 
     context 'when Legion::Data is not available' do
-      before { hide_const('Legion::Data') if defined?(Legion::Data) }
+      before { allow(Legion::Data).to receive(:connection).and_return(nil) }
 
-      it 'returns zero counts' do
-        result = host.run_decay_cycle
-        expect(result[:decayed]).to eq(0)
-        expect(result[:archived]).to eq(0)
+      it 'returns an explicit unavailable error' do
+        expect(host.run_decay_cycle).to include(success: false, decayed: 0, archived: 0,
+                                                error: 'apollo_data_not_available')
       end
     end
 
@@ -64,10 +64,10 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Maintenance do
   end
 
   describe '#check_corroboration' do
-    let(:host) { Object.new.extend(described_class) }
+    let(:host) { runner }
 
     context 'when Apollo data is not available' do
-      before { hide_const('Legion::Data::Model::ApolloEntry') if defined?(Legion::Data::Model::ApolloEntry) }
+      before { hide_const('Legion::Data::Model::Apollo') if defined?(Legion::Data::Model::Apollo) }
 
       it 'returns a structured error' do
         result = host.check_corroboration
@@ -77,11 +77,10 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Maintenance do
     end
 
     context 'when relation persistence is unavailable' do
-      let(:mock_entry_class) { double('ApolloEntry') }
+      let(:mock_entry_class) { double('Apollo::Entry') }
 
       before do
-        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
-        hide_const('Legion::Data::Model::ApolloRelation') if defined?(Legion::Data::Model::ApolloRelation)
+        stub_const('Legion::Data::Model::Apollo::Entry', mock_entry_class)
         hide_const('Legion::Data::Model::Apollo::Relation') if defined?(Legion::Data::Model::Apollo::Relation)
       end
 

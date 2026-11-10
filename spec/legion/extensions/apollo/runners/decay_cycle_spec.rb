@@ -1,28 +1,35 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'legion/extensions/apollo/runners/maintenance'
 
 RSpec.describe 'Apollo Decay Cycle' do
-  let(:maintenance) { Object.new.extend(Legion::Extensions::Apollo::Runners::Maintenance) }
+  let(:maintenance) { Legion::Extensions::Apollo::Runners::Maintenance }
+
+  before do
+    allow(Legion::Data).to receive(:connection).and_return(nil)
+    allow(maintenance).to receive(:settings).and_return(Legion::Extensions::Apollo.settings)
+  end
 
   describe '#run_decay_cycle' do
-    it 'returns zeros when db unavailable' do
-      result = maintenance.run_decay_cycle
-      expect(result).to eq({ decayed: 0, archived: 0 })
+    it 'returns an explicit unavailable error when the database is absent' do
+      expect(maintenance.run_decay_cycle).to include(
+        success: false, decayed: 0, archived: 0, error: 'apollo_data_not_available'
+      )
     end
   end
 
   describe 'configurable decay parameters' do
-    it 'returns POWER_LAW_ALPHA as default' do
-      expect(Legion::Extensions::Apollo::Helpers::Confidence.power_law_alpha).to eq(0.05)
+    it 'uses the configured power-law alpha' do
+      expect(Legion::Extensions::Apollo.settings[:power_law_alpha]).to eq(0.05)
     end
 
-    it 'returns default decay threshold' do
-      expect(Legion::Extensions::Apollo::Helpers::Confidence.decay_threshold).to eq(0.05)
+    it 'uses the configured decay threshold' do
+      expect(Legion::Extensions::Apollo.settings[:decay_threshold]).to eq(0.05)
     end
 
-    it 'returns default decay minimum age hours' do
-      expect(Legion::Extensions::Apollo::Helpers::Confidence.decay_min_age_hours).to eq(168)
+    it 'uses the configured minimum age' do
+      expect(Legion::Extensions::Apollo.settings[:decay_min_age_hours]).to eq(168)
     end
   end
 end

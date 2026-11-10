@@ -5,6 +5,7 @@ require 'spec_helper'
 require 'legion/extensions/apollo/helpers/graph_query'
 
 RSpec.describe Legion::Extensions::Apollo::Helpers::GraphQuery do
+  let(:host) { Object.new.extend(described_class) }
   let(:db) { Sequel.sqlite }
 
   before do
@@ -48,7 +49,7 @@ RSpec.describe Legion::Extensions::Apollo::Helpers::GraphQuery do
   end
 
   def traverse(entry_id:, depth: 3, relation_types: nil, requesting_principal_id: 11, **)
-    sql = described_class.build_traversal_sql(relation_types: relation_types, requesting_principal_id: requesting_principal_id)
+    sql = host.send(:graph_build_traversal_sql, relation_types: relation_types, requesting_principal_id: requesting_principal_id)
     db.fetch(sql, entry_id: entry_id, depth: depth, relation_types: relation_types,
                   requesting_principal_id: requesting_principal_id, spread_factor: 0.6, min_activation: 0.01).all
   end

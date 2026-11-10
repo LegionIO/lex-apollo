@@ -4,108 +4,104 @@ require 'spec_helper'
 require 'legion/extensions/apollo/runners/expertise'
 
 RSpec.describe Legion::Extensions::Apollo::Runners::Expertise do
-  let(:runner) do
-    obj = Object.new
-    obj.extend(described_class)
-    obj
+  let(:runner) { described_class }
+  let(:database) { Sequel.sqlite }
+  let(:entry_model) { Class.new(Sequel::Model(database[:apollo_entries])) }
+  let(:expertise_model) { Class.new(Sequel::Model(database[:apollo_expertise])) }
+
+  before do
+    allow(runner).to receive(:settings).and_return(Legion::Extensions::Apollo.settings)
+    database.create_table(:apollo_entries) do
+      primary_key :id
+      String :source_agent
+      String :knowledge_domain
+      String :tags
+      Float :confidence
+    end
+    database.create_table(:apollo_expertise) do
+      primary_key :id
+      String :agent_id
+      String :domain
+      Float :proficiency
+      Integer :entry_count
+      DateTime :last_active_at
+    end
+    stub_const('Legion::Data::Model::Apollo::Entry', entry_model)
+    stub_const('Legion::Data::Model::Apollo::Expertise', expertise_model)
   end
 
+  after { database.disconnect }
+
   describe '#get_expertise' do
-    it 'returns an expertise query payload' do
-      result = runner.get_expertise(domain: 'vault')
-      expect(result[:action]).to eq(:expertise_query)
-      expect(result[:domain]).to eq('vault')
-      expect(result[:min_proficiency]).to eq(0.0)
+    it 'returns persisted expertise ordered by proficiency' do
+      expertise_model.create(agent_id: 'worker-1', domain: 'vault', proficiency: 0.8, entry_count: 2)
+      expertise_model.create(agent_id: 'worker-2', domain: 'vault', proficiency: 0.6, entry_count: 1)
+
+      result = runner.get_expertise(domain: 'vault', min_proficiency: 0.0)
+
+      expect(result).to include(success: true, domain: 'vault', count: 2)
+      expect(result[:entries].map { |entry| entry[:agent_id] }).to eq(%w[worker-1 worker-2])
     end
   end
 
   describe '#domains_at_risk' do
-    it 'returns an at-risk query payload' do
-      result = runner.domains_at_risk(min_agents: 2)
-      expect(result[:action]).to eq(:domains_at_risk)
-      expect(result[:min_agents]).to eq(2)
+    it 'counts distinct agents per domain using SQL aggregation' do
+      expertise_model.create(agent_id: 'worker-1', domain: 'vault', proficiency: 0.8, entry_count: 2)
+      expertise_model.create(agent_id: 'worker-2', domain: 'vault', proficiency: 0.7, entry_count: 1)
+      expertise_model.create(agent_id: 'worker-1', domain: 'claims', proficiency: 0.7, entry_count: 1)
+
+      result = runner.domains_at_risk(min_agents: 3)
+
+      expect(result).to include(success: true, min_agents: 3, count: 2)
+      expect(result[:domains]).to contain_exactly(
+        include(domain: 'claims', agent_count: 1), include(domain: 'vault', agent_count: 2)
+      )
     end
   end
 
   describe '#agent_profile' do
-    it 'returns a profile query payload' do
+    it 'returns one agent profile ordered by domain' do
+      expertise_model.create(agent_id: 'worker-1', domain: 'vault', proficiency: 0.8, entry_count: 2)
+      expertise_model.create(agent_id: 'worker-1', domain: 'claims', proficiency: 0.7, entry_count: 1)
+      expertise_model.create(agent_id: 'worker-2', domain: 'vault', proficiency: 0.6, entry_count: 1)
+
       result = runner.agent_profile(agent_id: 'worker-1')
-      expect(result[:action]).to eq(:agent_profile)
-      expect(result[:agent_id]).to eq('worker-1')
+
+      expect(result).to include(success: true, agent_id: 'worker-1', count: 2)
+      expect(result[:entries].map { |entry| entry[:domain] }).to eq(%w[claims vault])
     end
   end
 
   describe '#aggregate' do
-    let(:host) { Object.new.extend(described_class) }
+    it 'returns an explicit error when canonical Apollo models are unavailable' do
+      hide_const('Legion::Data::Model::Apollo')
 
-    context 'when Apollo data is not available' do
-      before { hide_const('Legion::Data::Model::ApolloEntry') if defined?(Legion::Data::Model::ApolloEntry) }
-
-      it 'returns a structured error' do
-        result = host.aggregate
-        expect(result[:success]).to be false
-        expect(result[:error]).to eq('apollo_data_not_available')
-      end
+      expect(runner.aggregate).to include(success: false, error: 'apollo_data_not_available')
     end
 
-    context 'when entries exist' do
-      let(:mock_entry_class) { double('ApolloEntry') }
-      let(:mock_expertise_class) { double('ApolloExpertise') }
-      let(:entries) do
-        [
-          double('e1', source_agent: 'agent-1', tags: ['ruby'], confidence: 0.8),
-          double('e2', source_agent: 'agent-1', tags: ['ruby'], confidence: 0.6),
-          double('e3', source_agent: 'agent-2', tags: ['python'], confidence: 0.9)
-        ]
-      end
+    it 'groups by agent and domain without collapsing domain collisions' do
+      entry_model.create(source_agent: 'agent-1', knowledge_domain: 'ruby', confidence: 0.8)
+      entry_model.create(source_agent: 'agent-1', knowledge_domain: 'ruby', confidence: 0.6)
+      entry_model.create(source_agent: 'agent-1', knowledge_domain: 'python', confidence: 0.9)
+      entry_model.create(source_agent: 'agent-2', knowledge_domain: 'ruby', confidence: 0.7)
 
-      before do
-        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
-        stub_const('Legion::Data::Model::ApolloExpertise', mock_expertise_class)
-        allow(mock_entry_class).to receive(:select).and_return(double(exclude: double(all: entries)))
-        allow(mock_expertise_class).to receive(:where).and_return(double(first: nil))
-        allow(mock_expertise_class).to receive(:create)
-      end
+      result = runner.aggregate
 
-      it 'returns agent and domain counts' do
-        result = host.aggregate
-        expect(result[:success]).to be true
-        expect(result[:agents]).to eq(2)
-        expect(result[:domains]).to eq(2)
-      end
-
-      it 'creates expertise records' do
-        expect(mock_expertise_class).to receive(:create).twice
-        host.aggregate
-      end
-
-      it 'computes proficiency using log2 formula' do
-        # agent-1 ruby: avg=0.7, count=2, proficiency = 0.7 * log2(3) = 0.7 * 1.585 = 1.109 -> capped at 1.0
-        expect(mock_expertise_class).to receive(:create).with(
-          hash_including(agent_id: 'agent-1', domain: 'ruby', proficiency: 1.0)
-        )
-        # agent-2 python: avg=0.9, count=1, proficiency = 0.9 * log2(2) = 0.9 * 1.0 = 0.9
-        expect(mock_expertise_class).to receive(:create).with(
-          hash_including(agent_id: 'agent-2', domain: 'python', proficiency: 0.9)
-        )
-        host.aggregate
-      end
+      expect(result).to include(success: true, agents: 2, domains: 2)
+      rows = expertise_model.order(:agent_id, :domain).all.map { |row| [row.agent_id, row.domain, row.entry_count] }
+      expect(rows).to eq([['agent-1', 'python', 1], ['agent-1', 'ruby', 2], ['agent-2', 'ruby', 1]])
+      expect(expertise_model.where(agent_id: 'agent-1', domain: 'ruby').count).to eq(1)
     end
 
-    context 'when no entries exist' do
-      let(:mock_entry_class) { double('ApolloEntry') }
+    it 'derives a missing domain from the first serialized tag' do
+      entry_model.create(source_agent: 'agent-1', knowledge_domain: nil, tags: '["vault"]', confidence: 0.8)
 
-      before do
-        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
-        allow(mock_entry_class).to receive(:select).and_return(double(exclude: double(all: [])))
-      end
+      expect(runner.aggregate).to include(success: true, agents: 1, domains: 1)
+      expect(expertise_model.first.values).to include(agent_id: 'agent-1', domain: 'vault', entry_count: 1)
+    end
 
-      it 'returns zero counts' do
-        result = host.aggregate
-        expect(result[:success]).to be true
-        expect(result[:agents]).to eq(0)
-        expect(result[:domains]).to eq(0)
-      end
+    it 'returns zero counts for an empty canonical entry table' do
+      expect(runner.aggregate).to include(success: true, agents: 0, domains: 0)
     end
   end
 end
