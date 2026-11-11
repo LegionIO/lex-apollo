@@ -1,6 +1,10 @@
 inherit_gem:
   rubocop-legion: config/lex.yml
 
+# Runner workflows must remain callable through the module and retain helper mixins.
+Style/ModuleFunction:
+  EnforcedStyle: extend_self
+
 # Actors use modern Ruby one-liner `def time = N` syntax which this cop does not recognize
 Legion/Extension/EveryActorRequiresTime:
   Enabled: false

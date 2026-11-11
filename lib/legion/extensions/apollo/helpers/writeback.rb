@@ -2,160 +2,122 @@
 
 require 'digest'
 require 'socket'
+require 'legion/logging/helper'
+require 'legion/settings/helper'
+require 'legion/extensions/apollo/helpers/capability'
+require 'legion/extensions/apollo/helpers/tag_normalizer'
+require 'legion/extensions/apollo/runners/writeback'
 
 module Legion
   module Extensions
     module Apollo
       module Helpers
         module Writeback
-          extend Legion::Logging::Helper
-          extend Legion::Settings::Helper
+          include Legion::Logging::Helper
+          include Legion::Settings::Helper
+          include Legion::Extensions::Apollo::Helpers::Capability
+          include Legion::Extensions::Apollo::Helpers::TagNormalizer
+          extend self
 
           RESEARCH_TOOLS = %w[read_file search_files search_content run_command].freeze
-          MAX_CONTENT_LENGTH = 4000
-          MIN_CONTENT_LENGTH = 50
 
-          module_function
+          def evaluate_and_route(request:, response:, enrichments: {}, **)
+            return { success: true, skipped: true, reason: :disabled } if settings[:writeback][:enabled] == false
+            return { success: true, skipped: true, reason: :not_research } unless writeback_should_capture?(response: response, enrichments: enrichments)
 
-          def evaluate_and_route(request:, response:, enrichments: {})
-            return unless writeback_enabled?
-            return unless should_capture?(request, response, enrichments)
-
-            payload = build_payload(request: request, response: response)
-            route_payload(payload)
+            payload = writeback_build_payload(request: request, response: response)
+            writeback_route_payload(payload: payload)
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'apollo.writeback.evaluate_and_route')
+            raise
           end
 
-          def should_capture?(_request, response, enrichments)
-            content = response_content(response)
-            return false if content.nil? || content.length < min_content_length
+          def content_hash(content:, **)
+            normalized = content.to_s.strip.downcase.gsub(/\s+/, ' ')
+            Digest::MD5.hexdigest(normalized)
+          end
 
-            extract_tool_calls(response, enrichments).any? do |call|
+          private
+
+          def writeback_should_capture?(response:, enrichments:, **)
+            content = writeback_response_content(response: response)
+            return false if content.nil? || content.length < settings[:writeback][:min_content_length]
+
+            writeback_extract_tool_calls(response: response, enrichments: enrichments).any? do |call|
               name = call.respond_to?(:name) ? call.name : call[:name] || call['name']
               RESEARCH_TOOLS.include?(name)
             end
           end
 
-          def build_payload(request:, response:, source_channel: nil)
-            content = response_content(response)
-            caller_identity = extract_identity(request)
-            user_query = extract_user_query(request)
-            tags = derive_tags(user_query)
+          def writeback_build_payload(request:, response:, source_channel: nil, **)
+            content = writeback_response_content(response: response)[0...settings[:writeback][:max_content_length]]
+            caller_identity = writeback_extract_identity(request: request)
+            user_query = writeback_extract_user_query(request: request)
+            metadata = request.respond_to?(:metadata) && request.metadata.is_a?(Hash) ? request.metadata : {}
+            producer = metadata.slice(:context, :access_scope, :identity_principal_id, :identity_id, :identity_canonical_name,
+                                      :source_agent, :source_provider, :source_model, :source_channel, :knowledge_domain)
 
             {
-              content:          content[0...MAX_CONTENT_LENGTH],
-              content_type:     'observation',
-              tags:             Helpers::TagNormalizer.normalize_all(tags),
-              source_agent:     response.respond_to?(:model) ? response.model : 'unknown',
-              source_channel:   "#{source_channel || 'pipeline'}_synthesis",
-              submitted_by:     caller_identity,
-              submitted_from:   Socket.gethostname,
-              knowledge_domain: nil,
-              content_hash:     content_hash(content)
-            }
+              content:               content,
+              content_type:          'observation',
+              tags:                  tag_normalize_all(tags: writeback_derive_tags(query: user_query)),
+              source_agent:          response.respond_to?(:model) ? response.model : 'unknown',
+              source_model:          response.respond_to?(:model) ? response.model : nil,
+              source_provider:       response.respond_to?(:provider) ? response.provider : nil,
+              context:               {},
+              identity_principal_id: nil,
+              source_channel:        "#{source_channel || 'pipeline'}_synthesis",
+              submitted_by:          caller_identity,
+              submitted_from:        Socket.gethostname,
+              knowledge_domain:      nil,
+              content_hash:          content_hash(content: content)
+            }.merge(producer)
           end
 
-          def route_payload(payload)
-            can_embed = Helpers::Capability.can_embed?
-            can_write = Helpers::Capability.can_write?
-
-            if can_embed
-              result = Legion::LLM::Call::Embeddings.generate(text: payload[:content])
-              vector = result.is_a?(Hash) ? result[:vector] : result
-              payload[:embedding] = vector.is_a?(Array) && vector.any? ? vector : Array.new(1024, 0.0)
-            end
-
-            if can_write && can_embed
-              write_directly(payload)
+          def writeback_route_payload(payload:, **)
+            if capability_can_embed?
+              Legion::Extensions::Apollo::Runners::Writeback.handle_vectorize(**payload)
             else
-              publish_to_transport(payload, has_embedding: can_embed)
+              Legion::Extensions::Apollo::Runners::Writeback.writeback_deliver(payload: payload, has_embedding: false)
             end
           end
 
-          def write_directly(payload)
-            if defined?(Legion::Apollo)
-              Legion::Apollo.ingest(**payload)
-            else
-              Runners::Knowledge.handle_ingest(**payload)
-            end
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'apollo.writeback.write_directly')
-            publish_to_transport(payload, has_embedding: !payload[:embedding].nil?)
-          end
-
-          def publish_to_transport(payload, has_embedding: false)
-            return unless Legion.const_defined?(:Transport, false)
-
-            Transport::Messages::Writeback.new(
-              **payload, has_embedding: has_embedding
-            ).publish
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'apollo.writeback.publish_to_transport')
-          end
-
-          def writeback_enabled?
-            settings[:writeback][:enabled] != false
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'apollo.writeback.writeback_enabled')
-            true
-          end
-
-          def min_content_length
-            settings[:writeback][:min_content_length]
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'apollo.writeback.min_content_length')
-            MIN_CONTENT_LENGTH
-          end
-
-          def content_hash(content)
-            normalized = content.to_s.strip.downcase.gsub(/\s+/, ' ')
-            Digest::MD5.hexdigest(normalized)
-          end
-
-          def response_content(response)
+          def writeback_response_content(response:, **)
             msg = response.respond_to?(:message) ? response.message : nil
             return nil unless msg.is_a?(Hash)
 
             msg[:content] || msg['content']
           end
 
-          def extract_identity(request)
+          def writeback_extract_identity(request:, **)
             return 'unknown' unless request.respond_to?(:caller) && request.caller.is_a?(Hash)
 
             request.caller.dig(:requested_by, :identity) || 'unknown'
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'apollo.writeback.extract_identity')
-            'unknown'
           end
 
-          def extract_user_query(request)
+          def writeback_extract_user_query(request:, **)
             return '' unless request.respond_to?(:messages)
 
             user_msgs = Array(request.messages).select { |m| m[:role] == 'user' || m['role'] == 'user' }
-            (user_msgs.last || {})[:content] || ''
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'apollo.writeback.extract_user_query')
-            ''
+            last = user_msgs.last || {}
+            last[:content] || last['content'] || ''
           end
 
-          def extract_tool_calls(response, enrichments)
+          def writeback_extract_tool_calls(response:, enrichments:, **)
             calls = []
             calls.concat(Array(response.tools)) if response.respond_to?(:tools)
             calls.concat(Array(response.tool_calls)) if response.respond_to?(:tool_calls)
-            calls.concat(Array(enrichments['tool_calls'])) if enrichments['tool_calls']
-            calls.uniq! { |call| call.respond_to?(:name) ? call.name : call[:name] || call['name'] }
-            calls
+            calls.concat(Array(enrichments[:tool_calls] || enrichments['tool_calls']))
+            calls.uniq { |call| call.respond_to?(:name) ? call.name : call[:name] || call['name'] }
           end
 
-          def derive_tags(query)
+          def writeback_derive_tags(query:, **)
             stop_words = %w[a an the is are was were be been being have has had do does did will would shall
                             should may might can could of in to for on with at by from as into about between
                             how what when where why who which this that these those it its and or but not]
-            words = query.to_s.downcase.gsub(/[^a-z0-9\s]/, '').split
-            words.reject { |w| stop_words.include?(w) || w.length < 3 }
-                 .uniq
-                 .first(5)
+            query.to_s.downcase.gsub(/[^a-z0-9\s]/, '').split
+                 .reject { |word| stop_words.include?(word) || word.length < 3 }
+                 .uniq.first(5)
           end
         end
       end

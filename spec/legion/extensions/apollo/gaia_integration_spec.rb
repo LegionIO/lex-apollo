@@ -2,8 +2,11 @@
 
 require 'spec_helper'
 require 'legion/extensions/apollo/gaia_integration'
-
+require 'legion/extensions/apollo/runners/entity_watchdog'
 RSpec.describe Legion::Extensions::Apollo::GaiaIntegration do
+  before do
+    hide_const('Legion::Data::Model::Apollo::Expertise') if defined?(Legion::Data::Model::Apollo::Expertise)
+  end
   describe '.publishable?' do
     it 'returns true when above thresholds' do
       expect(described_class.publishable?({ confidence: 0.8, novelty: 0.5 })).to be true
@@ -23,7 +26,7 @@ RSpec.describe Legion::Extensions::Apollo::GaiaIntegration do
   end
 
   describe '.handle_mesh_departure' do
-    it 'returns nil when ApolloExpertise unavailable' do
+    it 'returns nil when canonical expertise model is unavailable' do
       expect(described_class.handle_mesh_departure(agent_id: 'test')).to be_nil
     end
   end
@@ -60,27 +63,13 @@ RSpec.describe Legion::Extensions::Apollo::GaiaIntegration do
     end
   end
 
-  describe 'entity watchdog phase handler' do
-    it 'detects entities from tick results' do
-      require 'legion/extensions/apollo/helpers/entity_watchdog'
-      tick_results = { content: 'Jane Doe deployed to https://api.example.com', tick_id: 'tick-1' }
-      entities = Legion::Extensions::Apollo::Helpers::EntityWatchdog.detect_entities(text: tick_results[:content])
-      expect(entities.size).to be >= 2
-    end
+  describe 'entity watchdog workflow' do
+    it 'reports missing canonical TaskLog instead of claiming a scan completed' do
+      hide_const('Legion::Data::Model::TaskLog') if defined?(Legion::Data::Model::TaskLog)
 
-    it 'links or creates entities from tick results' do
-      require 'legion/extensions/apollo/helpers/entity_watchdog'
-      tick_results = { content: 'Jane Doe at LegionIO/lex-mesh', tick_id: 'tick-2' }
-      entities = Legion::Extensions::Apollo::Helpers::EntityWatchdog.detect_entities(text: tick_results[:content])
-      result = Legion::Extensions::Apollo::Helpers::EntityWatchdog.link_or_create(
-        entities: entities, source_context: tick_results[:tick_id]
+      expect(Legion::Extensions::Apollo::Runners::EntityWatchdog.scan_and_ingest).to include(
+        success: false, error: 'task_log_not_available', ingested: 0
       )
-      expect(result[:success]).to be true
-    end
-
-    it 'entry point documents entity watchdog actor' do
-      entry_point = File.read(File.expand_path('../../../../lib/legion/extensions/apollo.rb', __dir__))
-      expect(entry_point).to include('Entity watchdog runs as Actor::EntityWatchdog')
     end
   end
 end

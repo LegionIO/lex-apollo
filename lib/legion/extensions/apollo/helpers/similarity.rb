@@ -1,46 +1,55 @@
 # frozen_string_literal: true
 
-require_relative 'confidence'
+require 'legion/json'
 
 module Legion
   module Extensions
     module Apollo
       module Helpers
         module Similarity
-          extend Legion::Logging::Helper
-          extend Legion::JSON::Helper
+          include Legion::Settings::Helper
+          include Legion::Logging::Helper
+          include Legion::JSON::Helper
 
-          module_function
+          private
 
-          def cosine_similarity(vec_a:, vec_b:, **)
-            vec_a = parse_vector(vec_a)
-            vec_b = parse_vector(vec_b)
-            return 0.0 unless vec_a.is_a?(Array) && vec_b.is_a?(Array)
+          def similarity_cosine(vec_a:, vec_b:, **)
+            left = similarity_parse_vector(vector: vec_a)
+            right = similarity_parse_vector(vector: vec_b)
+            return 0.0 unless left && right && left.length == right.length
 
-            dot = vec_a.zip(vec_b).sum { |x, y| x * y }
-            mag_a = Math.sqrt(vec_a.sum { |x| x**2 })
-            mag_b = Math.sqrt(vec_b.sum { |x| x**2 })
-            return 0.0 if mag_a.zero? || mag_b.zero?
+            scale_a = left.max_by(&:abs).abs
+            scale_b = right.max_by(&:abs).abs
+            return 0.0 if scale_a.zero? || scale_b.zero?
 
-            dot / (mag_a * mag_b)
+            dot = mag_a = mag_b = 0.0
+            left.each_index do |index|
+              a = left[index].fdiv(scale_a)
+              b = right[index].fdiv(scale_b)
+              dot += a * b
+              mag_a += a * a
+              mag_b += b * b
+            end
+            (dot / Math.sqrt(mag_a * mag_b)).clamp(-1.0, 1.0)
           end
 
-          def parse_vector(vec)
-            return vec if vec.is_a?(Array)
-            return nil unless vec.is_a?(String)
+          def similarity_parse_vector(vector:, **)
+            vector = json_parse(vector) if vector.is_a?(String)
+            return nil unless vector.is_a?(Array) && !vector.empty?
+            return nil unless vector.all? { |value| value.is_a?(Numeric) && value.real? && value.finite? }
 
-            json_parse(vec)
-          rescue StandardError => e
+            vector
+          rescue Legion::JSON::ParseError => e
             handle_exception(e, level: :warn, operation: 'apollo.similarity.parse_vector')
             nil
           end
 
-          def above_corroboration_threshold?(similarity:, **)
-            similarity >= Confidence::CORROBORATION_SIMILARITY_THRESHOLD
+          def similarity_above_corroboration_threshold?(similarity:, **)
+            similarity >= settings[:confidence][:corroboration_similarity]
           end
 
-          def classify_match(similarity:, same_content_type: true, contradicts: false, **)
-            if above_corroboration_threshold?(similarity: similarity) && same_content_type
+          def similarity_classify_match(similarity:, same_content_type: true, contradicts: false, **)
+            if similarity_above_corroboration_threshold?(similarity: similarity) && same_content_type
               contradicts ? :contradiction : :corroboration
             else
               :novel

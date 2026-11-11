@@ -1,11 +1,13 @@
 # frozen_string_literal: true
 
-require_relative 'helpers/data_models'
+require 'legion/extensions/apollo/helpers/data_models'
 
 module Legion
   module Extensions
     module Apollo
       module GaiaIntegration
+        extend Legion::Extensions::Apollo::Helpers::DataModels
+
         PUBLISH_CONFIDENCE_THRESHOLD = 0.6
         PUBLISH_NOVELTY_THRESHOLD = 0.3
 
@@ -30,13 +32,13 @@ module Legion
           end
 
           def handle_mesh_departure(agent_id:)
-            return nil unless Helpers::DataModels.apollo_expertise_available?
+            return nil if data_model_expertise.nil?
 
-            sole_expert_domains = Helpers::DataModels.apollo_expertise
-                                                     .where(agent_id: agent_id)
-                                                     .all
-                                                     .select { |e| sole_expert?(e.domain, agent_id) }
-                                                     .map(&:domain)
+            sole_expert_domains = data_model_expertise
+                                  .where(agent_id: agent_id)
+                                  .all
+                                  .select { |e| sole_expert?(e.domain, agent_id) }
+                                  .map(&:domain)
 
             return nil if sole_expert_domains.empty?
 
@@ -51,12 +53,12 @@ module Legion
           private
 
           def sole_expert?(domain, agent_id)
-            return false unless Helpers::DataModels.apollo_expertise_available?
+            return false if data_model_expertise.nil?
 
-            count = Helpers::DataModels.apollo_expertise
-                                       .where(domain: domain)
-                                       .exclude(agent_id: agent_id)
-                                       .count
+            count = data_model_expertise
+                    .where(domain: domain)
+                    .exclude(agent_id: agent_id)
+                    .count
             count.zero?
           end
         end

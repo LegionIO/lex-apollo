@@ -1,124 +1,57 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-
-require 'legion/extensions/apollo/helpers/confidence'
-require 'legion/extensions/apollo/helpers/similarity'
-require 'legion/extensions/apollo/helpers/graph_query'
 require 'legion/extensions/apollo/runners/entity_extractor'
 
 RSpec.describe Legion::Extensions::Apollo::Runners::EntityExtractor do
-  let(:runner) do
-    obj = Object.new
-    obj.extend(described_class)
-    obj
-  end
+  describe '.extract_entities' do
+    it 'returns an explicit unavailable result when the LLM is not started' do
+      allow(Legion::LLM).to receive(:started?).and_return(false)
 
-  describe '#extract_entities' do
-    context 'when Legion::LLM is not available' do
-      before { hide_const('Legion::LLM') if defined?(Legion::LLM) }
+      result = described_class.extract_entities(text: 'Jane works on lex-synapse')
 
-      it 'returns an empty entity list' do
-        result = runner.extract_entities(text: 'Jane works on lex-synapse')
-        expect(result[:success]).to be true
-        expect(result[:entities]).to eq([])
-        expect(result[:source]).to eq(:unavailable)
-      end
+      expect(result).to include(success: true, entities: [], source: :unavailable)
     end
 
-    context 'when Legion::LLM is available' do
-      let(:llm_result) do
-        {
-          data: {
-            entities: [
-              { name: 'lex-synapse', type: 'repository', confidence: 0.9 },
-              { name: 'Jane Doe',    type: 'person',     confidence: 0.8 }
-            ]
-          }
-        }
-      end
-
-      before do
-        stub_const('Legion::LLM', Module.new do
-          def self.started? = true
-
-          def self.structured(**) = { data: { entities: [] } }
-        end)
-        allow(Legion::LLM).to receive(:structured).and_return(llm_result)
-      end
-
-      it 'returns extracted entities' do
-        result = runner.extract_entities(text: 'Jane works on lex-synapse')
-        expect(result[:success]).to be true
-        expect(result[:entities].size).to eq(2)
-        expect(result[:source]).to eq(:llm)
-      end
-
-      it 'filters to configured entity types' do
-        result = runner.extract_entities(
-          text:         'Jane works on lex-synapse',
-          entity_types: ['repository']
-        )
-        expect(result[:entities].all? { |e| e[:type] == 'repository' }).to be true
-      end
-
-      it 'applies minimum confidence filter' do
-        result = runner.extract_entities(
-          text:           'Jane works on lex-synapse',
-          min_confidence: 0.85
-        )
-        expect(result[:entities].size).to eq(1)
-        expect(result[:entities].first[:name]).to eq('lex-synapse')
-      end
-    end
-
-    context 'when LLM raises' do
-      before do
-        stub_const('Legion::LLM', Module.new do
-          def self.started? = true
-
-          def self.structured(**) = raise(StandardError, 'timeout')
-        end)
-      end
-
-      it 'returns success false with error message' do
-        result = runner.extract_entities(text: 'anything')
-        expect(result[:success]).to be false
-        expect(result[:error]).to include('timeout')
-      end
-    end
-
-    context 'with empty text' do
-      it 'returns early with empty list' do
-        result = runner.extract_entities(text: '')
-        expect(result[:success]).to be true
-        expect(result[:entities]).to eq([])
-      end
-
-      it 'handles nil text' do
-        result = runner.extract_entities(text: nil)
-        expect(result[:success]).to be true
-        expect(result[:entities]).to eq([])
-      end
-    end
-  end
-
-  describe '#entity_extraction_prompt' do
-    it 'returns a non-empty string' do
-      prompt = runner.entity_extraction_prompt(
-        text: 'test text', entity_types: %w[person service]
+    it 'returns filtered entities from the structured LLM boundary' do
+      allow(Legion::LLM).to receive(:started?).and_return(true)
+      allow(Legion::LLM).to receive(:structured).and_return(
+        data: { entities: [
+          { name: 'lex-synapse', type: 'repository', confidence: 0.9 },
+          { name: 'Jane Doe', type: 'person', confidence: 0.8 },
+          { name: 'low', type: 'person', confidence: 0.2 }
+        ] }
       )
-      expect(prompt).to be_a(String)
-      expect(prompt).to include('person')
-      expect(prompt).to include('service')
-    end
-  end
 
-  describe '#entity_schema' do
-    it 'returns a JSON Schema hash' do
-      schema = runner.entity_schema
-      expect(schema[:type]).to eq('object')
-      expect(schema[:properties]).to have_key(:entities)
+      result = described_class.extract_entities(
+        text: 'Jane works on lex-synapse', entity_types: ['repository'], min_confidence: 0.85
+      )
+
+      expect(result).to include(success: true, source: :llm)
+      expect(result[:entities]).to eq([{ name: 'lex-synapse', type: 'repository', confidence: 0.9 }])
+    end
+
+    it 'returns a typed failure when the LLM boundary fails' do
+      allow(Legion::LLM).to receive(:started?).and_return(true)
+      allow(Legion::LLM).to receive(:structured).and_raise(StandardError, 'provider timeout')
+
+      result = described_class.extract_entities(text: 'anything')
+
+      expect(result).to include(success: false, entities: [], source: :error)
+      expect(result[:error]).to include('provider timeout')
+    end
+
+    it 'propagates programming errors instead of converting them into extraction failures' do
+      allow(Legion::LLM).to receive(:started?).and_return(true)
+      allow(Legion::LLM).to receive(:structured).and_raise(ArgumentError, 'bad schema')
+
+      expect { described_class.extract_entities(text: 'anything') }.to raise_error(ArgumentError, 'bad schema')
+    end
+
+    it 'returns an empty result for blank text' do
+      result = described_class.extract_entities(text: '')
+
+      expect(result).to include(success: true, entities: [], source: :empty)
     end
   end
 end

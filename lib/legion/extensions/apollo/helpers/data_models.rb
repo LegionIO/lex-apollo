@@ -1,58 +1,42 @@
 # frozen_string_literal: true
 
+require 'legion/data'
+
 module Legion
   module Extensions
     module Apollo
       module Helpers
         module DataModels
-          class << self
-            def apollo_entry
-              namespaced_apollo_model(:Entry) || legacy_model(:ApolloEntry)
-            end
+          private
 
-            def apollo_relation
-              namespaced_apollo_model(:Relation) || legacy_model(:ApolloRelation)
-            end
+          def data_model_entry
+            return unless defined?(Legion::Data::Model::Apollo::Entry)
 
-            def apollo_access_log
-              namespaced_apollo_model(:AccessLog) || legacy_model(:ApolloAccessLog)
-            end
+            Legion::Data::Model::Apollo::Entry
+          end
 
-            def apollo_expertise
-              namespaced_apollo_model(:Expertise) || legacy_model(:ApolloExpertise)
-            end
+          def data_model_relation
+            return unless defined?(Legion::Data::Model::Apollo::Relation)
 
-            def apollo_entry_available?
-              !apollo_entry.nil?
-            end
+            Legion::Data::Model::Apollo::Relation
+          end
 
-            def apollo_relation_available?
-              !apollo_relation.nil?
-            end
+          def data_model_access_log
+            return unless defined?(Legion::Data::Model::Apollo::AccessLog)
 
-            def apollo_access_log_available?
-              !apollo_access_log.nil?
-            end
+            Legion::Data::Model::Apollo::AccessLog
+          end
 
-            def apollo_expertise_available?
-              !apollo_expertise.nil?
-            end
+          def data_model_expertise
+            return unless defined?(Legion::Data::Model::Apollo::Expertise)
 
-            private
+            Legion::Data::Model::Apollo::Expertise
+          end
 
-            def namespaced_apollo_model(name)
-              return nil unless defined?(Legion::Data::Model::Apollo)
-              return nil unless Legion::Data::Model::Apollo.const_defined?(name, false)
+          def data_model_task_log
+            return unless defined?(Legion::Data::Model::TaskLog)
 
-              Legion::Data::Model::Apollo.const_get(name, false)
-            end
-
-            def legacy_model(name)
-              return nil unless defined?(Legion::Data::Model)
-              return nil unless Legion::Data::Model.const_defined?(name, false)
-
-              Legion::Data::Model.const_get(name, false)
-            end
+            Legion::Data::Model::TaskLog
           end
         end
       end

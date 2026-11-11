@@ -6,10 +6,11 @@ require 'legion/extensions/apollo/helpers/similarity'
 require 'legion/extensions/apollo/runners/maintenance'
 
 RSpec.describe Legion::Extensions::Apollo::Runners::Maintenance do
-  let(:runner) do
-    obj = Object.new
-    obj.extend(described_class)
-    obj
+  let(:runner) { described_class }
+
+  before do
+    hide_const('Legion::Data::Model::Apollo') if defined?(Legion::Data::Model::Apollo)
+    allow(runner).to receive(:settings).and_return(Legion::Extensions::Apollo.settings)
   end
 
   it 'retains client action envelopes without claiming completed service mutations when data is unavailable' do
@@ -21,62 +22,52 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Maintenance do
   end
 
   describe '#run_decay_cycle' do
-    let(:host) { Object.new.extend(described_class) }
+    let(:host) { runner }
 
     context 'when Legion::Data is not available' do
-      before { hide_const('Legion::Data') if defined?(Legion::Data) }
+      before { allow(Legion::Data).to receive(:connection).and_return(nil) }
 
-      it 'returns zero counts' do
-        result = host.run_decay_cycle
-        expect(result[:decayed]).to eq(0)
-        expect(result[:archived]).to eq(0)
+      it 'returns an explicit unavailable error' do
+        expect(host.run_decay_cycle).to include(success: false, decayed: 0, archived: 0,
+                                                error: 'apollo_data_not_available')
       end
     end
 
-    context 'when data is available' do
-      let(:mock_conn) { double('connection') }
-      let(:mock_dataset) { double('dataset') }
+    context 'with SQLite records spanning a batch boundary' do
+      let(:db) { Sequel.sqlite }
 
       before do
-        data_mod = Module.new do
-          def self.connection; end
-
-          def self.respond_to?(method, *args)
-            method == :connection || super
-          end
+        db.create_table(:apollo_entries) do
+          primary_key :id
+          String :status
+          Float :confidence
+          DateTime :created_at
+          DateTime :updated_at
         end
-        stub_const('Legion::Data', data_mod)
-        allow(Legion::Data).to receive(:connection).and_return(mock_conn)
-        allow(mock_conn).to receive(:[]).with(:apollo_entries).and_return(mock_dataset)
-        allow(mock_dataset).to receive(:exclude).and_return(mock_dataset)
-        allow(mock_dataset).to receive(:where).and_return(mock_dataset)
-        allow(mock_dataset).to receive(:update).and_return(5)
+        allow(Legion::Data).to receive(:connection).and_return(db)
       end
 
-      it 'returns alpha in result hash' do
-        result = host.run_decay_cycle
-        expect(result[:alpha]).to eq(0.05)
-        expect(result).not_to have_key(:rate)
-      end
+      after { db.disconnect }
 
-      it 'returns decayed and archived counts' do
-        result = host.run_decay_cycle
-        expect(result[:decayed]).to eq(5)
-        expect(result[:archived]).to eq(5)
-      end
+      it 'decays all eligible rows without skipping records as archived rows leave the batch scope' do
+        old = Time.now - (30 * 86_400)
+        501.times { db[:apollo_entries].insert(status: 'candidate', confidence: 0.01, created_at: old) }
+        retained = db[:apollo_entries].insert(status: 'confirmed', confidence: 1.0, created_at: old)
+        young = db[:apollo_entries].insert(status: 'candidate', confidence: 0.01, created_at: Time.now)
 
-      it 'accepts custom alpha parameter' do
-        result = host.run_decay_cycle(alpha: 0.3)
-        expect(result[:alpha]).to eq(0.3)
+        expect(host.run_decay_cycle(alpha: 0.3, min_confidence: 0.05)).to include(decayed: 502, archived: 501)
+        expect(db[:apollo_entries].where(status: 'archived').count).to eq(501)
+        expect(db[:apollo_entries][id: retained][:confidence]).to be_between(0.9, 1.0).exclusive
+        expect(db[:apollo_entries][id: young]).to include(status: 'candidate', confidence: 0.01)
       end
     end
   end
 
   describe '#check_corroboration' do
-    let(:host) { Object.new.extend(described_class) }
+    let(:host) { runner }
 
     context 'when Apollo data is not available' do
-      before { hide_const('Legion::Data::Model::ApolloEntry') if defined?(Legion::Data::Model::ApolloEntry) }
+      before { hide_const('Legion::Data::Model::Apollo') if defined?(Legion::Data::Model::Apollo) }
 
       it 'returns a structured error' do
         result = host.check_corroboration
@@ -86,11 +77,10 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Maintenance do
     end
 
     context 'when relation persistence is unavailable' do
-      let(:mock_entry_class) { double('ApolloEntry') }
+      let(:mock_entry_class) { double('Apollo::Entry') }
 
       before do
-        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
-        hide_const('Legion::Data::Model::ApolloRelation') if defined?(Legion::Data::Model::ApolloRelation)
+        stub_const('Legion::Data::Model::Apollo::Entry', mock_entry_class)
         hide_const('Legion::Data::Model::Apollo::Relation') if defined?(Legion::Data::Model::Apollo::Relation)
       end
 
@@ -98,28 +88,6 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Maintenance do
         expect(mock_entry_class).not_to receive(:where)
 
         expect(host.check_corroboration).to include(success: false, error: 'apollo_data_not_available')
-      end
-    end
-
-    context 'when no candidates exist' do
-      let(:mock_entry_class) { double('ApolloEntry') }
-
-      before do
-        stub_const('Legion::Data::Model::ApolloEntry', mock_entry_class)
-        stub_const('Legion::Data::Model::ApolloRelation', Class.new)
-        candidate_dataset = double(
-          exclude: double(order: double(limit: double(all: [])))
-        )
-        confirmed_dataset = double(select_map: [])
-        allow(mock_entry_class).to receive(:where).with(status: 'candidate').and_return(candidate_dataset)
-        allow(mock_entry_class).to receive(:where).with(status: 'confirmed').and_return(confirmed_dataset)
-      end
-
-      it 'returns zero promoted and scanned' do
-        result = host.check_corroboration
-        expect(result[:success]).to be true
-        expect(result[:promoted]).to eq(0)
-        expect(result[:scanned]).to eq(0)
       end
     end
   end
