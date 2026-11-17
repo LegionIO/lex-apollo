@@ -76,7 +76,7 @@ module Legion
                    .where { created_at >= cutoff }
                    .order(Sequel.desc(:created_at))
                    .limit(log_limit)
-                   .select_map(:message)
+                   .select_map(:entry)
             texts = logs.map(&:to_s).reject(&:empty?).uniq
             log.debug("EntityWatchdog recent_task_log_texts lookback=#{lookback} limit=#{log_limit} raw=#{logs.size} unique=#{texts.size}")
             texts

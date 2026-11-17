@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.45] - 2026-11-17
+
+### Fixed
+- Read entity watchdog task log text from `TaskLog.entry`, the column created by legion-data migration 139. The previous query referenced a nonexistent `message` column, so every watchdog tick logged a `PG::UndefinedColumn` error and ingested nothing.
+
 ## [0.4.44] - 2026-10-30
 
 ### Fixed

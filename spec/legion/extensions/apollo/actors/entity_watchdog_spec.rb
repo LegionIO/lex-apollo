@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'sequel'
 
 unless defined?(Legion::Extensions::Actors::Every)
   module Legion
@@ -128,6 +129,27 @@ RSpec.describe Legion::Extensions::Apollo::Actor::EntityWatchdog do
 
       it 'returns an empty array' do
         expect(actor.recent_task_log_texts).to eq([])
+      end
+    end
+
+    context 'when task logs use the released legion-data schema' do
+      let(:db) { Sequel.sqlite }
+
+      before do
+        db.create_table(:task_logs) do
+          primary_key :id
+          String :entry
+          DateTime :created_at
+        end
+        stub_const('Legion::Data::Model::TaskLog', Class.new(Sequel::Model(db[:task_logs])))
+        db[:task_logs].insert(entry: 'deploying lex-synapse to nomad', created_at: Time.now)
+        db[:task_logs].insert(entry: 'stale entry outside lookback', created_at: Time.now - 3600)
+      end
+
+      after { db.disconnect }
+
+      it 'reads log text from the entry column within the lookback window' do
+        expect(actor.recent_task_log_texts).to eq(['deploying lex-synapse to nomad'])
       end
     end
   end
