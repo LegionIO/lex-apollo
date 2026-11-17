@@ -22,7 +22,8 @@ module Legion
             )
             raise Legion::Extensions::Apollo::Helpers::Embedding::Error, 'Embedding generation did not return a result' unless result.is_a?(Hash)
 
-            provenance = embedding_parse_provenance(value: result[:embedding_provenance])
+            provenance = embedding_parse_provenance(value: result[:embedding_provenance]) ||
+                         embedding_legacy_provenance(result: result, task: task)
             vector = result[:vector]
             unless embedding_valid?(vector: vector, provenance: provenance, task: task)
               raise Legion::Extensions::Apollo::Helpers::Embedding::Error, 'Embedding generation returned an invalid vector or provenance'

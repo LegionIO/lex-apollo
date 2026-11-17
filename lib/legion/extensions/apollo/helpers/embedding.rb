@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'digest'
 require 'legion/json'
 require 'sequel'
 require 'sequel/extensions/pg_json'
@@ -29,6 +30,46 @@ module Legion
           rescue Legion::JSON::ParseError => e
             handle_exception(e, level: :warn, operation: 'apollo.embedding.parse_provenance')
             nil
+          end
+
+          # Fail forward across legion-llm releases: 0.16.9 returns flat routing
+          # fields without embedding_provenance. Derive the same space identity
+          # 0.16.10+ returns (key order and values mirror its embedding_identity)
+          # so vectors from both API shapes compare in one space.
+          def embedding_legacy_provenance(result:, task:, **)
+            vector = result[:vector]
+            provider = result[:provider].to_s
+            model = result[:model].to_s
+            instance = result[:instance].to_s
+            return nil unless vector.is_a?(Array) && !vector.empty?
+            return nil if provider.strip.empty? || model.strip.empty? || instance.strip.empty?
+
+            dimensions = result[:dimensions]
+            dimensions = vector.length unless dimensions.is_a?(Integer) && dimensions.positive?
+            identity = {
+              provider:        provider,
+              model:           model,
+              model_revision:  nil,
+              identity_source: 'instance',
+              instance:        instance,
+              dimensions:      dimensions,
+              prefixes:        { document: embedding_legacy_prefix(model: model, task: :document),
+                                 query:    embedding_legacy_prefix(model: model, task: :query) },
+              normalization:   'none'
+            }
+            identity.merge(space_id: Digest::SHA256.hexdigest(Legion::JSON.dump(identity)), task: task.to_s)
+          end
+
+          # Registry semantics mirror legion-llm's prefix_for: the model base
+          # (before ':') keys the configured prefix registry; absent policies are ''.
+          def embedding_legacy_prefix(model:, task:, **)
+            llm = Legion::Settings[:llm]
+            embedding = llm[:embedding] if llm.is_a?(Hash)
+            registry = embedding[:prefix_registry] if embedding.is_a?(Hash)
+            registry = {} unless registry.is_a?(Hash)
+            base = model.to_s.split(':').first
+            model_prefixes = registry[base] || {}
+            (model_prefixes[task] || model_prefixes[task.to_s]).to_s
           end
 
           def embedding_valid?(vector:, provenance:, task: nil, **)
