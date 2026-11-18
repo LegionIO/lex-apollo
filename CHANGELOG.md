@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.48] - 2026-11-18
+
+### Fixed
+- Disable GAS audit-event ingestion by default. Require explicit private principal scope and sanitized content before processing, reject sensitive-looking source and derived text, never deposit raw responses in mechanical mode, and restrict semantic relation lookup to the same principal (#47).
+
 ## [0.4.47] - 2026-11-18
 
 ### Fixed

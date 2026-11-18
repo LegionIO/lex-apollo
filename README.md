@@ -160,6 +160,8 @@ Service actors include:
 | `ContradictionScanner` | Interval | 600s | Scan queued entries and retain failures for retry |
 | `EntityWatchdog` | Interval | 120s | Extract entities from recent `TaskLog.entry` values and publish missing knowledge |
 
+GAS ingestion is disabled by default (`apollo.gas.enabled: false`). When enabled, it processes only audit events explicitly marked `content_sanitized: true` with `access_scope: private` and a positive `identity_principal_id`. It rejects source text containing recognized PII or PHI patterns, skips sensitive-looking derived entries, and stores accepted entries under that principal. The current `legion-llm` audit publisher does not supply those scope and sanitization fields, so its events remain non-persisting until that producer contract is added. GAS does not deposit a raw response when its LLM is unavailable, and it does not promote private audit content into the unscoped anticipation store.
+
 The entity watchdog is disabled by default (`apollo.entity_watchdog.enabled: false`). Enable it only on a designated service with permission to read the intended task logs. Its scan does not filter by task owner or identity, and published entities use the global access scope.
 
 Actors own scheduling and delivery management; runner modules own workflows. Call public runner methods on their modules rather than extending arbitrary objects. Helpers provide private, concern-prefixed utilities. The existing `Helpers::Writeback.evaluate_and_route` and `content_hash(content:)` APIs remain unchanged pending their separate caller migration.

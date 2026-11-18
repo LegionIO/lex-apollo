@@ -78,6 +78,7 @@ module Legion
             mesh_export_limit:           100
           },
           gas:                 {
+            enabled:                  false,
             relate_confidence_gate:   0.7,
             synthesis_confidence_cap: 0.7,
             max_anticipations:        3,

@@ -65,7 +65,7 @@ RSpec.describe 'Apollo GAS relation persistence' do
       end
       result = Legion::Extensions::Apollo::Runners::Gas.send(
         :gas_phase_deposit, facts: input[:facts], relations: input[:relations], synthesis: [],
-        audit_event: { request_id: 'gas-regression' }
+        audit_event: { request_id: 'gas-regression', identity_principal_id: 42 }
       )
       puts "APOLLO_RESULT=#{::JSON.generate(result: result, relations: db[:apollo_relations].all)}"
     RUBY
@@ -84,7 +84,8 @@ RSpec.describe 'Apollo GAS relation persistence' do
   end
 
   it 'links successful deduplicated facts safely and continues after an independent relation write fails' do
-    entry = { content_type: 'fact', status: 'candidate', access_scope: 'global', confidence: 0.5 }
+    entry = { content_type: 'fact', status: 'candidate', access_scope: 'private', identity_principal_id: 42,
+              confidence: 0.5 }
     entries = [entry.merge(id: 1, content: 'stored fact'), entry.merge(id: 2, content: 'target evidence'),
                entry.merge(id: 3, content: 'private evidence', access_scope: 'private', identity_principal_id: 99),
                entry.merge(id: 4, content: 'second fact')]
