@@ -65,9 +65,15 @@ RSpec.describe Legion::Extensions::Apollo::GaiaIntegration do
 
   describe 'entity watchdog workflow' do
     it 'reports missing canonical TaskLog instead of claiming a scan completed' do
+      watchdog = Legion::Extensions::Apollo::Runners::EntityWatchdog
+      allow(watchdog).to receive(:settings).and_return(
+        Legion::Extensions::Apollo.default_settings.merge(
+          entity_watchdog: Legion::Extensions::Apollo.default_settings[:entity_watchdog].merge(enabled: true)
+        )
+      )
       hide_const('Legion::Data::Model::TaskLog') if defined?(Legion::Data::Model::TaskLog)
 
-      expect(Legion::Extensions::Apollo::Runners::EntityWatchdog.scan_and_ingest).to include(
+      expect(watchdog.scan_and_ingest).to include(
         success: false, error: 'task_log_not_available', ingested: 0
       )
     end

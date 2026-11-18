@@ -7,7 +7,7 @@ module Legion
         extend Legion::Extensions::Transport
 
         def self.additional_e_to_q
-          [
+          bindings = [
             { from:        Legion::Extensions::Apollo::Transport::Exchanges::Apollo,
               to:          Legion::Extensions::Apollo::Transport::Queues::Ingest,
               routing_key: 'legion.apollo.ingest' },
@@ -19,11 +19,14 @@ module Legion
               routing_key: 'legion.apollo.writeback.store' },
             { from:        Legion::Extensions::Apollo::Transport::Exchanges::Apollo,
               to:          Legion::Extensions::Apollo::Transport::Queues::WritebackVectorize,
-              routing_key: 'legion.apollo.writeback.vectorize' },
-            { from:        Legion::Extensions::Apollo::Transport::Exchanges::LlmAudit,
-              to:          Legion::Extensions::Apollo::Transport::Queues::GasSubscriber,
-              routing_key: 'llm.audit.complete' }
+              routing_key: 'legion.apollo.writeback.vectorize' }
           ]
+          if Legion::Extensions::Apollo.settings[:gas][:enabled] == true
+            bindings << { from:        Legion::Extensions::Apollo::Transport::Exchanges::LlmAudit,
+                          to:          Legion::Extensions::Apollo::Transport::Queues::GasSubscriber,
+                          routing_key: 'llm.audit.complete' }
+          end
+          bindings
         end
       end
     end

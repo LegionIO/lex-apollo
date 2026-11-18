@@ -11,6 +11,18 @@ module Legion
         class GasSubscriber < Legion::Extensions::Actors::Subscription
           include Legion::Extensions::Apollo::Transport::SubscriptionDelivery
 
+          def prepare
+            return unless settings[:gas][:enabled] == true
+
+            super
+          end
+
+          def activate
+            return unless settings[:gas][:enabled] == true
+
+            super
+          end
+
           def runner_class    = Legion::Extensions::Apollo::Runners::Gas
           def runner_function = 'process'
           def check_subtask?  = false

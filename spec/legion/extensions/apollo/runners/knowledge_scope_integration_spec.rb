@@ -87,10 +87,10 @@ RSpec.describe 'Apollo knowledge access boundaries' do
       RbConfig.ruby, '-Ilib', '-Ispec', '-e', scope_script,
       chdir: File.expand_path('../../../../..', __dir__), stdin_data: JSON.generate(action: action, principal: principal)
     )
-    line = stdout.lines.find { |output| output.start_with?('APOLLO_RESULT=') }
-    raise "Scoped knowledge process failed: #{stderr}\n#{stdout}" unless status.success? && line
+    marker = 'APOLLO_RESULT='
+    raise "Scoped knowledge process failed: #{stderr}\n#{stdout}" unless status.success? && stdout.include?(marker)
 
-    JSON.parse(line.delete_prefix('APOLLO_RESULT='), symbolize_names: true)
+    ApolloSpecOutput.parse(stdout)
   end
 
   it 'keeps anonymous browse global-only while applying confidence and source exclusions' do

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/llm/inference'
+require 'legion/llm/inference/steps/classification'
 require 'legion/logging/helper'
 require 'legion/settings/helper'
 require 'legion/json'
@@ -30,15 +31,18 @@ module Legion
               log.debug('GAS process skipped reason=no_content')
               return { success: true, phases_completed: 0, reason: 'no content' }
             end
+            return { success: true, phases_completed: 0, reason: 'disabled' } unless settings[:gas][:enabled] == true
+            return { success: true, phases_completed: 0, reason: 'unsafe_audit_event' } unless gas_persistable_event?(audit_event)
+            return { success: true, phases_completed: 0, reason: 'llm_unavailable' } unless Legion::LLM.started?
 
             log.debug("GAS process start request_id=#{audit_event[:request_id] || 'nil'} messages=#{Array(audit_event[:messages]).size} response_length=#{audit_event[:response_content].to_s.length}") # rubocop:disable Layout/LineLength
 
-            facts = gas_phase_comprehend(audit_event)
+            facts = gas_phase_comprehend(audit_event).reject { |fact| gas_sensitive_content?(fact[:content]) }
             entities = gas_phase_extract(audit_event, facts)
-            relations = gas_phase_relate(facts: facts)
+            relations = gas_phase_relate(facts: facts, requesting_principal_id: audit_event[:identity_principal_id])
             synthesis = gas_phase_synthesize(facts, relations)
             deposit_result = gas_phase_deposit(facts: facts, relations: relations, synthesis: synthesis, audit_event: audit_event)
-            anticipations = gas_phase_anticipate(facts, synthesis)
+            anticipations = []
 
             result = {
               success:          deposit_result[:failed].zero? && deposit_result[:relations_failed].zero?,
@@ -63,14 +67,30 @@ module Legion
             event[:messages]&.any? == true && !event[:response_content].nil?
           end
 
+          def gas_persistable_event?(event)
+            return false unless event[:access_scope].to_s == 'private'
+            return false unless event[:identity_principal_id].is_a?(Integer) && event[:identity_principal_id].positive?
+            return false unless event[:content_sanitized] == true
+
+            !gas_sensitive_content?(Legion::JSON.dump([event[:messages], event[:response_content]]))
+          end
+
+          def gas_sensitive_content?(content)
+            text = content.to_s
+            classification = Legion::LLM::Inference::Steps::Classification
+            classification::PII_PATTERNS.each_value do |pattern|
+              return true if text.match?(pattern)
+            end
+            classification::PHI_KEYWORDS.any? { |keyword| text.downcase.include?(keyword) }
+          end
+
           # Phase 1: Comprehend - extract typed facts from the exchange
           def gas_phase_comprehend(audit_event)
             messages = audit_event[:messages]
             response = audit_event[:response_content]
 
-            mode = Legion::LLM.started? ? :llm : :mechanical
-            log.debug("GAS phase_comprehend mode=#{mode} messages=#{Array(messages).size} response_length=#{response.to_s.length}")
-            facts = mode == :llm ? gas_llm_comprehend(messages, response) : gas_mechanical_comprehend(messages, response)
+            log.debug("GAS phase_comprehend mode=llm messages=#{Array(messages).size} response_length=#{response.to_s.length}")
+            facts = gas_llm_comprehend(messages, response)
             log.debug("GAS phase_comprehend facts=#{facts.size}")
             facts
           end
@@ -86,8 +106,8 @@ module Legion
           end
 
           # Phase 3: Relate - classify relationships between new and existing entries
-          def gas_phase_relate(facts:, **)
-            existing = gas_fetch_similar_entries(facts: facts)
+          def gas_phase_relate(facts:, requesting_principal_id: nil, **)
+            existing = gas_fetch_similar_entries(facts: facts, requesting_principal_id: requesting_principal_id)
             if existing.empty?
               log.debug("GAS phase_relate skipped reason=no_existing_entries facts=#{facts.size}")
               return []
@@ -127,6 +147,10 @@ module Legion
             source_ids = {}
             { facts: facts, synthesis: synthesis }.each do |kind, entries|
               entries.each_with_index do |item, index|
+                if gas_sensitive_content?(item[:content])
+                  counts[:skipped_sensitive] = counts.fetch(:skipped_sensitive, 0) + 1
+                  next
+                end
                 context = { source_request_id: audit_event[:request_id] }
                 if kind == :synthesis
                   context[:source_indices] = Array(item[:source_indices])
@@ -138,7 +162,8 @@ module Legion
                   content: item[:content], content_type: item[:content_type].to_s,
                   tags: %w[gas auto_extracted], source_agent: 'gas_pipeline',
                   source_provider: audit_event.dig(:routing, :provider),
-                  knowledge_domain: 'general', context: context
+                  knowledge_domain: 'general', context: context,
+                  access_scope: 'private', identity_principal_id: audit_event[:identity_principal_id]
                 )
                 unless result.is_a?(Hash) && result[:success] == true && result[:entry_id]
                   counts[:failed] += 1
@@ -189,7 +214,7 @@ module Legion
               end
 
               key = [source.id, target.id, type]
-              if source.id == target.id || source[:access_scope] != target[:access_scope] || seen[key]
+              if source.id == target.id || gas_relation_crosses_scope?(source: source, target: target) || seen[key]
                 counts[:relations_skipped] += 1
                 next
               end
@@ -210,6 +235,11 @@ module Legion
               confidence.between?(settings[:gas][:relate_confidence_gate], 1.0)
           end
 
+          def gas_relation_crosses_scope?(source:, target:)
+            source[:access_scope] != target[:access_scope] ||
+              source[:identity_principal_id] != target[:identity_principal_id]
+          end
+
           # Phase 6: Anticipate - pre-cache likely follow-up questions
           def gas_phase_anticipate(facts, _synthesis)
             if facts.empty?
@@ -226,13 +256,14 @@ module Legion
             anticipations
           end
 
-          def gas_fetch_similar_entries(facts:, **)
+          def gas_fetch_similar_entries(facts:, requesting_principal_id: nil, **)
             lim = settings[:gas][:similar_entries_limit]
             min_conf = settings[:query][:default_min_confidence]
             entries = []
             facts.each do |fact|
               result = Legion::Extensions::Apollo::Runners::Knowledge.retrieve_relevant(
-                query: fact[:content], limit: lim, min_confidence: min_conf
+                query: fact[:content], limit: lim, min_confidence: min_conf,
+                requesting_principal_id: requesting_principal_id
               )
               raise IOError, "Apollo semantic retrieval failed: #{result[:error]}" unless result[:success]
 
@@ -426,10 +457,6 @@ module Legion
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'apollo.gas.promote_to_pattern_store')
             nil
-          end
-
-          def gas_mechanical_comprehend(_messages, response)
-            [{ content: response, content_type: :observation }]
           end
 
           def gas_llm_comprehend(messages, response)

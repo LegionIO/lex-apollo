@@ -239,10 +239,10 @@ RSpec.describe Legion::Extensions::Apollo::Api do
         RbConfig.ruby, '-Ilib', '-Ispec', '-e', http_script,
         chdir: File.expand_path('../../../..', __dir__), stdin_data: JSON.generate(requests: requests)
       )
-      line = stdout.lines.find { |output| output.start_with?('APOLLO_RESULT=') }
-      raise "HTTP identity process failed: #{stderr}\n#{stdout}" unless status.success? && line
+      marker = 'APOLLO_RESULT='
+      raise "HTTP identity process failed: #{stderr}\n#{stdout}" unless status.success? && stdout.include?(marker)
 
-      JSON.parse(line.delete_prefix('APOLLO_RESULT='), symbolize_names: true)
+      ApolloSpecOutput.parse(stdout)
     end
 
     it 'keeps anonymous, synthesized-system, and unmapped callers global-only despite forged ownership' do

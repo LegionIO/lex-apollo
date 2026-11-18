@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.4.49] - 2026-11-18
+
+### Fixed
+- Filter opt-in entity-watchdog task-log reads in SQL to global/public rows or private/team rows matching the running process principal or identity before log content leaves the database. Preserve restricted scope and principal through entity lookup and publication.
+- Avoid delivering raw LLM audit events to disabled GAS subscribers; omit the audit queue binding on new disabled setups.
+
+## [0.4.48] - 2026-11-18
+
+### Fixed
+- Disable GAS audit-event ingestion by default. Require explicit private principal scope and sanitized content before processing, reject sensitive-looking source and derived text, never deposit raw responses in mechanical mode, and restrict semantic relation lookup to the same principal (#47).
+
+## [0.4.47] - 2026-11-18
+
+### Fixed
+- Scale the power-law decay exponent by the configured actor interval so hourly runs apply approximately one daily decay step instead of compounding 24 daily steps (#45).
+
+## [0.4.46] - 2026-11-18
+
+### Fixed
+- Disable the entity watchdog's task-log scan by default. Opt in with `apollo.entity_watchdog.enabled: true` only where reading and publishing entities from recent task logs is intended and permitted; disabled scans never query `task_logs`.
+
 ## [0.4.45] - 2026-10-30
 
 ### Fixed

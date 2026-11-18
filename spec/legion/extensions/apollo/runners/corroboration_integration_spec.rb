@@ -86,10 +86,10 @@ RSpec.describe 'Apollo corroboration persistence' do
       chdir:      File.expand_path('../../../../..', __dir__),
       stdin_data: JSON.generate(entries: entries, memberships: memberships, identities: identities, runs: runs)
     )
-    line = stdout.lines.find { |output| output.start_with?('APOLLO_RESULT=') }
-    raise "Corroboration process failed: #{stderr}\n#{stdout}" unless status.success? && line
+    marker = 'APOLLO_RESULT='
+    raise "Corroboration process failed: #{stderr}\n#{stdout}" unless status.success? && stdout.include?(marker)
 
-    JSON.parse(line.delete_prefix('APOLLO_RESULT='), symbolize_names: true)
+    ApolloSpecOutput.parse(stdout)
   end
 
   it 'rejects other domains, inactive states, other content types, and dependent sources' do
