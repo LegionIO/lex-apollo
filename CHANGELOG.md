@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.49] - 2026-11-18
+
+### Fixed
+- Filter opt-in entity-watchdog task-log reads in SQL to global/public rows or private/team rows matching the running process principal or identity before log content leaves the database. Preserve restricted scope and principal through entity lookup and publication.
+
 ## [0.4.48] - 2026-11-18
 
 ### Fixed
