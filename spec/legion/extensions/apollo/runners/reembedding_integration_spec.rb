@@ -115,10 +115,10 @@ RSpec.describe 'Apollo reembedding and space isolation' do
       chdir:      File.expand_path('../../../../..', __dir__),
       stdin_data: JSON.generate(entries: entries, **)
     )
-    line = stdout.lines.find { |output| output.start_with?('APOLLO_RESULT=') }
-    raise "Reembedding process failed: #{stderr}\n#{stdout}" unless status.success? && line
+    marker = 'APOLLO_RESULT='
+    raise "Reembedding process failed: #{stderr}\n#{stdout}" unless status.success? && stdout.include?(marker)
 
-    JSON.parse(line.delete_prefix('APOLLO_RESULT='), symbolize_names: true)
+    ApolloSpecOutput.parse(stdout)
   end
 
   it 'regenerates legacy documents in resumable bounded batches without changing archived or known-space entries' do

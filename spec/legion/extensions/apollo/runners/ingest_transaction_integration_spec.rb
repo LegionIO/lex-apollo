@@ -117,10 +117,10 @@ RSpec.describe 'Apollo ingest transaction' do
       chdir:      File.expand_path('../../../../..', __dir__),
       stdin_data: JSON.generate({ content: content, source_agent: source_agent, missing: missing }.merge(options))
     )
-    line = stdout.lines.find { |output| output.start_with?('APOLLO_RESULT=') }
-    raise "Ingest transaction process failed: #{stderr}\n#{stdout}" unless status.success? && line
+    marker = 'APOLLO_RESULT='
+    raise "Ingest transaction process failed: #{stderr}\n#{stdout}" unless status.success? && stdout.include?(marker)
 
-    JSON.parse(line.delete_prefix('APOLLO_RESULT='), symbolize_names: true)
+    ApolloSpecOutput.parse(stdout)
   end
 
   it 'commits the entry, expertise bookkeeping, and access log as one successful ingest' do

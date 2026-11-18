@@ -111,10 +111,10 @@ RSpec.describe 'Apollo service lifecycle mutations' do
       chdir:      File.expand_path('../../../../..', __dir__),
       stdin_data: JSON.generate(operation: operation)
     )
-    line = stdout.lines.find { |output| output.start_with?('APOLLO_RESULT=') }
-    raise "Lifecycle process failed: #{stderr}\n#{stdout}" unless status.success? && line
+    marker = 'APOLLO_RESULT='
+    raise "Lifecycle process failed: #{stderr}\n#{stdout}" unless status.success? && stdout.include?(marker)
 
-    JSON.parse(line.delete_prefix('APOLLO_RESULT='), symbolize_names: true)
+    ApolloSpecOutput.parse(stdout)
   end
 
   it 'archives through HTTP with retained metadata and truthful repeat, missing, unavailable, and rollback outcomes' do

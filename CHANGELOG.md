@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.47] - 2026-11-18
+
+### Fixed
+- Scale the power-law decay exponent by the configured actor interval so hourly runs apply approximately one daily decay step instead of compounding 24 daily steps (#45).
+
 ## [0.4.46] - 2026-11-18
 
 ### Fixed

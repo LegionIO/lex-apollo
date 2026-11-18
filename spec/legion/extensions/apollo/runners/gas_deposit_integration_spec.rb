@@ -77,10 +77,10 @@ RSpec.describe 'Apollo GAS relation persistence' do
       chdir:      File.expand_path('../../../../..', __dir__),
       stdin_data: JSON.generate(entries: entries, facts: facts, relations: relations)
     )
-    line = stdout.lines.find { |output| output.start_with?('APOLLO_RESULT=') }
-    raise "GAS deposit process failed: #{stderr}\n#{stdout}" unless status.success? && line
+    marker = 'APOLLO_RESULT='
+    raise "GAS deposit process failed: #{stderr}\n#{stdout}" unless status.success? && stdout.include?(marker)
 
-    JSON.parse(line.delete_prefix('APOLLO_RESULT='), symbolize_names: true)
+    ApolloSpecOutput.parse(stdout)
   end
 
   it 'links successful deduplicated facts safely and continues after an independent relation write fails' do

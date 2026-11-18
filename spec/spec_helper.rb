@@ -12,6 +12,37 @@ require 'legion/transport'
 require 'sequel'
 require 'sequel/extensions/pg_array'
 require 'digest'
+require 'json'
+
+module ApolloSpecOutput
+  def self.parse(stdout)
+    payload = stdout.split('APOLLO_RESULT=', 2).last
+    depth = 0
+    in_string = false
+    escaped = false
+
+    payload.each_char.with_index do |character, index|
+      if in_string
+        if escaped
+          escaped = false
+        elsif character == '\\'
+          escaped = true
+        elsif character == '"'
+          in_string = false
+        end
+      elsif character == '"'
+        in_string = true
+      elsif ['{', '['].include?(character)
+        depth += 1
+      elsif ['}', ']'].include?(character)
+        depth -= 1
+        return ::JSON.parse(payload[0..index], symbolize_names: true) if depth.zero?
+      end
+    end
+
+    ::JSON.parse(payload, symbolize_names: true)
+  end
+end
 
 module ApolloSpecEmbedding
   def self.result(vector: [1.0, 0.0], task: :document, model: 'test', provider: 'test', instance: 'test', **)

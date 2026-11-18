@@ -93,6 +93,7 @@ module Legion
             alpha ||= Legion::Extensions::Apollo.settings[:power_law_alpha]
             min_confidence ||= Legion::Extensions::Apollo.settings[:decay_threshold]
             min_age_hours = Legion::Extensions::Apollo.settings[:decay_min_age_hours]
+            cycle_alpha = alpha * (Legion::Extensions::Apollo.settings[:actors][:decay_interval].to_f / 86_400.0)
 
             log.debug("Apollo Maintenance.run_decay_cycle alpha=#{alpha} min_confidence=#{min_confidence} min_age_hours=#{min_age_hours}")
             unless Legion::Data.connection
@@ -102,7 +103,8 @@ module Legion
 
             conn = Legion::Data.connection
             if conn.database_type == :sqlite
-              return maintenance_decay_sqlite_entries(db: conn, alpha: alpha, min_confidence: min_confidence,
+              return maintenance_decay_sqlite_entries(db: conn, alpha: alpha, cycle_alpha: cycle_alpha,
+                                                      min_confidence: min_confidence,
                                                       min_age_hours: min_age_hours)
             end
 
@@ -111,7 +113,7 @@ module Legion
             )
             decay_factor = Sequel.lit(
               'POWER(CAST(? AS double precision) / (CAST(? AS double precision) + 1.0), ?)',
-              age_days_expr, age_days_expr, alpha
+              age_days_expr, age_days_expr, cycle_alpha
             )
 
             min_age_filter = Sequel.lit(
@@ -225,7 +227,7 @@ module Legion
 
           private
 
-          def maintenance_decay_sqlite_entries(db:, alpha:, min_confidence:, min_age_hours:, **)
+          def maintenance_decay_sqlite_entries(db:, alpha:, cycle_alpha:, min_confidence:, min_age_hours:, **)
             now = Time.now
             cutoff = now - (min_age_hours * 3600)
             entries = db[:apollo_entries].exclude(status: 'archived')
@@ -236,7 +238,7 @@ module Legion
               entries.order(:id).paged_each(rows_per_fetch: 500, strategy: :filter) do |entry|
                 timestamp = entry[:updated_at] || entry[:created_at]
                 age_days = [(now - timestamp.to_time) / 86_400.0, 1.0].max
-                confidence = entry[:confidence].to_f * ((age_days / (age_days + 1.0))**alpha)
+                confidence = entry[:confidence].to_f * ((age_days / (age_days + 1.0))**cycle_alpha)
                 updates = { confidence: confidence }
                 if confidence < min_confidence
                   updates[:status] = 'archived'

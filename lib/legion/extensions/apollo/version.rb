@@ -3,7 +3,7 @@
 module Legion
   module Extensions
     module Apollo
-      VERSION = '0.4.46'
+      VERSION = '0.4.47'
     end
   end
 end

@@ -60,6 +60,22 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Maintenance do
         expect(db[:apollo_entries][id: retained][:confidence]).to be_between(0.9, 1.0).exclusive
         expect(db[:apollo_entries][id: young]).to include(status: 'candidate', confidence: 0.01)
       end
+
+      it 'applies approximately one day of power-law decay across 24 hourly cycles' do
+        start_time = Time.now
+        initial_confidence = 0.5
+        entry_id = db[:apollo_entries].insert(
+          status: 'confirmed', confidence: initial_confidence, created_at: start_time - (8 * 86_400)
+        )
+
+        24.times do |hour|
+          allow(Time).to receive(:now).and_return(start_time + (hour * 3600))
+          expect(host.run_decay_cycle).to include(success: true, decayed: 1, archived: 0)
+        end
+
+        expected = initial_confidence * ((8.0 / 9.0)**Legion::Extensions::Apollo.settings[:power_law_alpha])
+        expect(db[:apollo_entries][id: entry_id][:confidence]).to be_within(0.001).of(expected)
+      end
     end
   end
 
