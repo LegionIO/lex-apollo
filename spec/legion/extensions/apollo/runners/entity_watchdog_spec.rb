@@ -9,6 +9,11 @@ RSpec.describe Legion::Extensions::Apollo::Runners::EntityWatchdog do
   let(:published) { [] }
 
   before do
+    allow(described_class).to receive(:settings).and_return(
+      Legion::Extensions::Apollo.default_settings.merge(
+        entity_watchdog: Legion::Extensions::Apollo.default_settings[:entity_watchdog].merge(enabled: true)
+      )
+    )
     db.create_table(:task_logs) do
       primary_key :id
       String :entry
@@ -37,6 +42,15 @@ RSpec.describe Legion::Extensions::Apollo::Runners::EntityWatchdog do
 
   def log_entry(text, offset: 0)
     Legion::Data::Model::TaskLog.create(entry: text, created_at: Time.now - offset)
+  end
+
+  it 'does not query task logs unless explicitly enabled' do
+    allow(described_class).to receive(:settings).and_return(Legion::Extensions::Apollo.default_settings)
+    log_entry('private task text')
+    expect(Legion::Data::Model::TaskLog).not_to receive(:where)
+
+    expect(described_class.scan_and_ingest).to include(success: true, ingested: 0, reason: :disabled)
+    expect(published).to be_empty
   end
 
   it 'reports missing TaskLog storage instead of treating it as an empty scan' do

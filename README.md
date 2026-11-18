@@ -160,6 +160,8 @@ Service actors include:
 | `ContradictionScanner` | Interval | 600s | Scan queued entries and retain failures for retry |
 | `EntityWatchdog` | Interval | 120s | Extract entities from recent `TaskLog.entry` values and publish missing knowledge |
 
+The entity watchdog is disabled by default (`apollo.entity_watchdog.enabled: false`). Enable it only on a designated service with permission to read the intended task logs. Its scan does not filter by task owner or identity, and published entities use the global access scope.
+
 Actors own scheduling and delivery management; runner modules own workflows. Call public runner methods on their modules rather than extending arbitrary objects. Helpers provide private, concern-prefixed utilities. The existing `Helpers::Writeback.evaluate_and_route` and `content_hash(content:)` APIs remain unchanged pending their separate caller migration.
 
 Semantic embedding or lookup failure returns an explicit failure, not browse results or an empty successful search. Expertise queries require local models, return plain hashes, and count distinct agents for domain coverage. The watchdog counts accepted publications, remembers only successfully processed log texts, and retries failed texts.

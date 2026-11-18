@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.46] - 2026-11-18
+
+### Fixed
+- Disable the entity watchdog's task-log scan by default. Opt in with `apollo.entity_watchdog.enabled: true` only where reading and publishing entities from recent task logs is intended and permitted; disabled scans never query `task_logs`.
+
 ## [0.4.45] - 2026-10-30
 
 ### Fixed

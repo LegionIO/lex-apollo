@@ -109,6 +109,7 @@ module Legion
             types:          %w[person service repository concept]
           },
           entity_watchdog:     {
+            enabled:               false,
             concept_keywords:      [],
             types:                 %w[person service repository concept],
             detect_confidence:     0.5,

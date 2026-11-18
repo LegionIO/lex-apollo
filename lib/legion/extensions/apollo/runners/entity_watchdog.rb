@@ -19,6 +19,8 @@ module Legion
           extend self
 
           def scan_and_ingest(**)
+            return { success: true, ingested: 0, reason: :disabled } unless settings[:entity_watchdog][:enabled] == true
+
             return { success: false, error: 'task_log_not_available', ingested: 0 } if data_model_task_log.nil?
 
             texts = entity_watchdog_recent_task_log_texts
