@@ -4,6 +4,7 @@
 
 ### Fixed
 - Filter opt-in entity-watchdog task-log reads in SQL to global/public rows or private/team rows matching the running process principal or identity before log content leaves the database. Preserve restricted scope and principal through entity lookup and publication.
+- Avoid delivering raw LLM audit events to disabled GAS subscribers; omit the audit queue binding on new disabled setups.
 
 ## [0.4.48] - 2026-11-18
 
