@@ -148,10 +148,10 @@ RSpec.describe Legion::Extensions::Apollo::Transport::Messages::Writeback do
       { 'LEGION_MODE' => 'lite' }, RbConfig.ruby, '-Ilib', '-e', script,
       chdir: File.expand_path('../../../../../..', __dir__)
     )
-    line = stdout.lines.find { |output| output.start_with?('APOLLO_RESULT=') }
-    raise "Writeback process failed: #{stderr}\n#{stdout}" unless status.success? && line
+    marker = 'APOLLO_RESULT='
+    raise "Writeback process failed: #{stderr}\n#{stdout}" unless status.success? && stdout.include?(marker)
 
-    state = Legion::JSON.load(line.delete_prefix('APOLLO_RESULT='))
+    state = Legion::JSON.load(stdout.split(marker, 2).last)
     expect(state[:result]).to include(accepted: true, status: 'accepted')
     expect(state[:deliveries]).to contain_exactly(
       include(content: 'local fact', content_type: 'fact', embedding: [0.6, 0.8], identity_principal_id: 41)

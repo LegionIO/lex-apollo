@@ -18,7 +18,7 @@ runs:
 
         dependencies = {
             "data": ("legion-data", (1, 10, 29)),
-            "llm": ("legion-llm", (0, 16, 10)),
+            "llm": ("legion-llm", (0, 16, 9)),
         }
         with open(os.environ["GITHUB_OUTPUT"], "a") as output:
             for key, (name, required) in dependencies.items():
@@ -37,7 +37,8 @@ runs:
         ref: 55dc669dfdf7a77f43661f0e9865a8b5a073c917
         path: tmp/ci-dependencies/legion-data
         persist-credentials: false
-    # legion-llm#199: routed embedding provenance and validation.
+    # legion-llm#199: routed embedding provenance (only if published releases lag the floor;
+    # published 0.16.9 flat results are supported without the companion).
     - name: Check out Apollo embedding companion
       if: steps.dependencies.outputs.llm == 'true'
       uses: actions/checkout@v4

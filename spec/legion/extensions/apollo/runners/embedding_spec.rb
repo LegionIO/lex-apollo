@@ -64,4 +64,36 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Embedding do
     allow(Legion::LLM::Call::Embeddings).to receive(:generate).and_raise(NoMethodError, 'broken provider integration')
     expect { described_class.generate(text: 'request') }.to raise_error(NoMethodError, 'broken provider integration')
   end
+
+  context 'when the generator returns 0.16.9 flat routing fields without embedding_provenance' do
+    let(:legacy_result) do
+      { vector: [0.6, 0.8], provider: 'test', model: 'embed', instance: 'local',
+        tier: 'local', dimensions: 2, tokens: 3, chunks: 1 }
+    end
+
+    before do
+      allow(Legion::LLM::Call::Embeddings).to receive(:generate).and_return(legacy_result)
+    end
+
+    it 'derives a stable space provenance from the flat result' do
+      first = described_class.generate(text: 'request')
+      second = described_class.generate(text: 'request')
+
+      expect(first[:vector]).to eq([0.6, 0.8])
+      expect(first[:provenance]).to include(provider: 'test', model: 'embed', instance: 'local',
+                                            dimensions: 2, task: 'document', identity_source: 'instance',
+                                            normalization: 'none')
+      expect(first[:provenance][:space_id]).to match(/\A[0-9a-f]{64}\z/)
+      expect(first[:provenance]).to eq(second[:provenance])
+    end
+
+    it 'keeps distinct models in distinct embedding spaces' do
+      first = described_class.generate(text: 'request')
+      allow(Legion::LLM::Call::Embeddings).to receive(:generate)
+        .and_return(legacy_result.merge(model: 'other-model'))
+      second = described_class.generate(text: 'request')
+
+      expect(first[:provenance][:space_id]).not_to eq(second[:provenance][:space_id])
+    end
+  end
 end
