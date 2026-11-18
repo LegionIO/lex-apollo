@@ -20,6 +20,8 @@
 - Reject failed ingest and writeback-store deliveries into bounded retries and dead-lettering instead of acknowledging unsuccessful runner results. Preserve correlated RPC retries without depending on the host task dispatcher's success envelope.
 - Return explicit failures for unavailable models, semantic embedding errors, and failed GAS phases instead of reporting empty successful results. Read watchdog text from `TaskLog.entry`, retain failed texts for retry, and report accepted partial publications.
 - Count distinct agents in expertise coverage and retain separate agent/domain groups even when identifiers contain colons.
+- Accept both published legion-llm 0.16.9 flat embedding results and 0.16.10+ provenance results: flat results derive a stable deterministic space identity (instance-sourced `space_id`, mirroring the 0.16.10 identity fields) so semantic search and space-compatibility checks work on either release, and spaces carry over unchanged across the upgrade when the underlying identity does not.
+- Parse the writeback integration specs' `APOLLO_RESULT=` payload to end of output instead of a single line, so the checks survive pretty-printed JSON dumps.
 
 ### Added
 - Add bounded `Maintenance.reembed_entries` for legacy backfill and model/dimension migration, with resumable cursors, truthful partial failures, and unchanged content/hash/ownership/status.
@@ -27,7 +29,7 @@
 ### Changed
 - Require `legion-transport >= 1.4.31` for the published keyword envelope API and fail-closed encryption contract.
 - Use keyword-only arguments for Apollo-owned methods changed in this release and discard unused keywords with `**`; preserve required positional framework callbacks while dropping extra keywords before superclass dispatch.
-- Require `legion-data >= 1.10.29` (migration 139) and `legion-llm >= 0.16.10` for ownership-scoped hash uniqueness and durable embedding provenance. The original content hash remains unchanged; published mainline migrations 137 and 138 remain untouched.
+- Require `legion-data >= 1.10.29` (migration 139) and `legion-llm >= 0.16.9` for ownership-scoped hash uniqueness and durable embedding provenance. The original content hash remains unchanged; published mainline migrations 137 and 138 remain untouched.
 - Embedding routing remains solely owned by `legion-llm`; remove obsolete Apollo provider/model settings. Core-client legacy wire migration and synchronous remote retrieval remain outside this server release.
 - Load standalone runners with their declared native dependencies, without adding LegionIO as a runtime or development dependency. Preserve the existing writeback helper entry points until their separate caller migration.
 

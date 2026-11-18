@@ -43,10 +43,10 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Writeback do
         RbConfig.ruby, '-I', File.expand_path('../../../../../lib', __dir__), '-e', script,
         stdin_data: Legion::JSON.dump(input), chdir: home
       )
-      line = stdout.lines.find { |output| output.start_with?('APOLLO_RESULT=') }
-      raise "Writeback process failed: #{stderr}\n#{stdout}" unless status.success? && line
+      marker = 'APOLLO_RESULT='
+      raise "Writeback process failed: #{stderr}\n#{stdout}" unless status.success? && stdout.include?(marker)
 
-      state = Legion::JSON.load(line.delete_prefix('APOLLO_RESULT='))
+      state = Legion::JSON.load(stdout.split(marker, 2).last)
       expect(state[:result]).to include(success: true, action: 'vectorized')
       expect(state[:received]).to contain_exactly(
         hash_including(content: payload[:content], identity_principal_id: 41, identity_id: nil,
