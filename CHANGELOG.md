@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.46] - 2026-11-18
+
+### Fixed
+- Declare typed LLM tool schemas for `query_knowledge`, `handle_query`, and `retrieve_relevant` (integer `limit` with `minimum: 1`, numeric `min_confidence`, array `status`/`tags`, boolean `skip`, required `query`), replacing the framework synthesizer's all-string, no-required schemas. Models now receive the real contract and send values the runners accept; a value that still deviates fails with the existing explicit validation error, which the tool loop returns for the model to retry.
+
+### Changed
+- Track the framework-side schema synthesis defects as LegionIO/LegionIO#260 (keyword args never marked required) and LegionIO/LegionIO#261 (all-string parameter typing).
+
 ## [0.4.45] - 2026-10-30
 
 ### Fixed
