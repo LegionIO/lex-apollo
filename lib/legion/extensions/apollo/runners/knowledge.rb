@@ -11,6 +11,58 @@ require 'legion/extensions/apollo/helpers/tag_normalizer'
 require 'legion/extensions/apollo/runners/contradictions'
 require 'legion/extensions/apollo/runners/embedding'
 require 'legion/extensions/apollo/runners/search'
+
+# Tool-definition metadata (legion-llm/LegionIO discovery hook). Vendored with a
+# defined? guard: lex-apollo must not depend on LegionIO (LegionIO pattern).
+unless defined?(Legion::Extensions::Definitions)
+  module Legion
+    module Extensions
+      module Definitions
+        DEFAULTS = {
+          remote_invocable: true,
+          mcp_exposed:      true,
+          idempotent:       false,
+          risk_tier:        :standard,
+          tags:             [],
+          requires:         [],
+          inputs:           {},
+          outputs:          {}
+        }.freeze
+
+        def definition(method_name, **opts)
+          base = DEFAULTS.transform_values do |value|
+            case value
+            when Array, Hash
+              value.dup
+            else
+              value
+            end
+          end
+          own_definitions[method_name.to_sym] = base.merge(opts)
+        end
+
+        def definitions
+          if respond_to?(:superclass) && superclass.respond_to?(:definitions)
+            superclass.definitions.merge(own_definitions)
+          else
+            own_definitions.dup
+          end
+        end
+
+        def definition_for(method_name)
+          definitions[method_name.to_sym]
+        end
+
+        private
+
+        def own_definitions
+          @own_definitions ||= {}
+        end
+      end
+    end
+  end
+end
+
 module Legion
   module Extensions
     module Apollo
@@ -26,6 +78,7 @@ module Legion
           extend Legion::Extensions::Apollo::Helpers::Embedding
           extend Legion::Extensions::Apollo::Helpers::Similarity
           extend Legion::Extensions::Apollo::Helpers::GraphQuery
+          extend Legion::Extensions::Definitions
           extend self
 
           CONTENT_TYPE_ALIASES = {
@@ -37,6 +90,45 @@ module Legion
           }.freeze
           DEFAULT_QUERY_STATUS = [:confirmed].freeze
           UNSET = Object.new.freeze
+
+          # The framework synthesizer types every parameter as string and never
+          # marks keyword args required (LegionIO/LegionIO#260, #261); declare the
+          # real contract so LLM tool callers send values the runner accepts.
+          definition :query_knowledge,
+                     desc:   'Semantic search over the shared knowledge store',
+                     inputs: { properties: { query:          { type: 'string' },
+                                             limit:          { type: 'integer', minimum: 1 },
+                                             min_confidence: { type: 'number' },
+                                             status:         { type: 'array', items: { type: 'string' } },
+                                             tags:           { type: 'array', items: { type: 'string' } } },
+                               required:   ['query'] }
+
+          definition :handle_query,
+                     desc:   'Query the knowledge store with embedding, filters, and access logging',
+                     inputs: { properties: { query:                   { type: 'string' },
+                                             limit:                   { type: 'integer', minimum: 1 },
+                                             min_confidence:          { type: 'number' },
+                                             status:                  { type: 'array', items: { type: 'string' } },
+                                             tags:                    { type: 'array', items: { type: 'string' } },
+                                             tag_match:               { type: 'string', enum: %w[any all] },
+                                             exclude_source_agents:   { type: 'array', items: { type: 'string' } },
+                                             domain:                  { type: 'string' },
+                                             agent_id:                { type: 'string' },
+                                             requesting_principal_id: { type: 'integer' } },
+                               required:   ['query'] }
+
+          definition :retrieve_relevant,
+                     desc:   'Retrieve relevant entries for retrieval pipelines without access logging',
+                     inputs: { properties: { query:                   { type: 'string' },
+                                             limit:                   { type: 'integer', minimum: 1 },
+                                             min_confidence:          { type: 'number' },
+                                             status:                  { type: 'array', items: { type: 'string' } },
+                                             tags:                    { type: 'array', items: { type: 'string' } },
+                                             tag_match:               { type: 'string', enum: %w[any all] },
+                                             exclude_source_agents:   { type: 'array', items: { type: 'string' } },
+                                             domain:                  { type: 'string' },
+                                             skip:                    { type: 'boolean' },
+                                             requesting_principal_id: { type: 'integer' } } }
 
           def store_knowledge(content:, content_type:, tags: [], source_agent: nil, context: {}, **)
             content_type = knowledge_normalize_content_type(content_type)

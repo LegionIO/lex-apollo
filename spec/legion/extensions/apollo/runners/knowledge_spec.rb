@@ -540,6 +540,36 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Knowledge do
     end
   end
 
+  describe 'tool definitions (LLM tool schema contract)' do
+    it 'declares a typed schema for query_knowledge with required query' do
+      defn = described_class.definition_for(:query_knowledge)
+      props = defn[:inputs][:properties]
+
+      expect(props[:limit]).to include(type: 'integer')
+      expect(props[:min_confidence]).to include(type: 'number')
+      expect(props[:tags]).to include(type: 'array')
+      expect(defn[:inputs][:required]).to eq(['query'])
+    end
+
+    it 'declares a typed schema for handle_query' do
+      defn = described_class.definition_for(:handle_query)
+      props = defn[:inputs][:properties]
+
+      expect(props[:limit]).to include(type: 'integer')
+      expect(props[:tag_match]).to include(type: 'string')
+      expect(defn[:inputs][:required]).to eq(['query'])
+    end
+
+    it 'declares a typed schema for retrieve_relevant with optional query' do
+      defn = described_class.definition_for(:retrieve_relevant)
+      props = defn[:inputs][:properties]
+
+      expect(props[:limit]).to include(type: 'integer')
+      expect(props[:skip]).to include(type: 'boolean')
+      expect(defn[:inputs].fetch(:required, [])).to be_empty
+    end
+  end
+
   describe '#handle_traverse' do
     let(:host) { runner }
 
