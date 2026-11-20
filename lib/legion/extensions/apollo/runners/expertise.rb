@@ -3,7 +3,6 @@
 require 'legion/logging/helper'
 require 'legion/settings/helper'
 require 'legion/extensions/apollo/helpers/data_models'
-require 'legion/extensions/apollo/helpers/storage'
 
 module Legion
   module Extensions
@@ -13,7 +12,6 @@ module Legion
           include Legion::Logging::Helper
           include Legion::Settings::Helper
           extend Legion::Extensions::Apollo::Helpers::DataModels
-          extend Legion::Extensions::Apollo::Helpers::Storage
           extend self
 
           def get_expertise(domain:, min_proficiency: settings[:expertise][:initial_proficiency], **)
@@ -60,12 +58,12 @@ module Legion
               return { success: false, error: 'apollo_data_not_available' }
             end
 
-            entries = model.select(:source_agent, :knowledge_domain, :tags, :confidence).exclude(source_agent: nil).all
-            log.debug("Apollo Expertise.aggregate entries=#{entries.size}")
+            groups = expertise_groups(model: model)
+            log.debug("Apollo Expertise.aggregate groups=#{groups.size}")
 
             agent_set = Set.new
             domain_set = Set.new
-            expertise_groups(entries: entries).each_value do |group|
+            groups.each do |group|
               expertise_upsert_group(model: expertise_model, group: group)
               agent_set << group[:agent_id]
               domain_set << group[:domain]
@@ -80,20 +78,23 @@ module Legion
 
           private
 
-          def expertise_groups(entries:, **)
-            entries.each_with_object({}) do |entry, groups|
-              agent = entry.source_agent
-              domain = entry.knowledge_domain ||
-                       storage_deserialize_tags(tags: entry.tags).first || 'general'
-              key = [agent, domain]
-              groups[key] ||= { agent_id: agent, domain: domain, confidences: [] }
-              groups[key][:confidences] << entry.confidence.to_f
-            end
+          def expertise_groups(model:, **)
+            domain = case model.db.database_type
+                     when :postgres then Sequel.lit("COALESCE(knowledge_domain, tags[1], 'general')")
+                     when :sqlite then Sequel.lit("COALESCE(knowledge_domain, json_extract(tags, '$[0]'), 'general')")
+                     else raise ArgumentError, "unsupported Apollo adapter: #{model.db.database_type}"
+                     end
+
+            model.dataset.exclude(source_agent: nil)
+                 .select(Sequel[:source_agent].as(:agent_id), domain.as(:domain),
+                         Sequel.function(:count, Sequel.lit('*')).as(:entry_count),
+                         Sequel.function(:avg, Sequel.function(:coalesce, :confidence, 0.0)).as(:average_confidence))
+                 .group(:source_agent, domain).naked.all
           end
 
           def expertise_upsert_group(model:, group:, **)
-            count = group[:confidences].size
-            proficiency = expertise_proficiency(confidences: group[:confidences])
+            count = group[:entry_count]
+            proficiency = expertise_proficiency(average_confidence: group[:average_confidence], entry_count: count)
             existing = model.first(agent_id: group[:agent_id], domain: group[:domain])
 
             if existing
@@ -104,10 +105,9 @@ module Legion
             end
           end
 
-          def expertise_proficiency(confidences:, **)
-            avg = confidences.sum / confidences.size
+          def expertise_proficiency(average_confidence:, entry_count:, **)
             cap = settings[:expertise][:proficiency_cap]
-            [avg * Math.log2(confidences.size + 1), cap].min
+            [average_confidence.to_f * Math.log2(entry_count + 1), cap].min
           end
         end
       end

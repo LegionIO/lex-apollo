@@ -100,6 +100,26 @@ RSpec.describe Legion::Extensions::Apollo::Runners::Expertise do
       expect(expertise_model.first.values).to include(agent_id: 'agent-1', domain: 'vault', entry_count: 1)
     end
 
+    it 'aggregates confidence and counts while preserving missing-domain and nil-confidence behavior' do
+      sql = []
+      logger = Object.new
+      logger.define_singleton_method(:info) { |statement| sql << statement }
+      database.loggers << logger
+
+      entry_model.create(source_agent: 'agent-1', knowledge_domain: 'ruby', confidence: 0.8)
+      entry_model.create(source_agent: 'agent-1', knowledge_domain: 'ruby', confidence: 0.6)
+      entry_model.create(source_agent: 'agent-1', knowledge_domain: 'ruby', confidence: nil)
+      entry_model.create(source_agent: 'agent-1', knowledge_domain: nil, tags: '[]', confidence: 0.5)
+      entry_model.create(source_agent: nil, knowledge_domain: 'ruby', confidence: 1.0)
+
+      expect(runner.aggregate).to include(success: true, agents: 1, domains: 2)
+      ruby = expertise_model.first(agent_id: 'agent-1', domain: 'ruby')
+      expect(ruby.entry_count).to eq(3)
+      expect(ruby.proficiency).to be_within(0.000001).of(((0.8 + 0.6) / 3) * Math.log2(4))
+      expect(expertise_model.first(agent_id: 'agent-1', domain: 'general').entry_count).to eq(1)
+      expect(sql).to include(a_string_matching(/SELECT .*avg.*FROM .*apollo_entries.*GROUP BY/i))
+    end
+
     it 'returns zero counts for an empty canonical entry table' do
       expect(runner.aggregate).to include(success: true, agents: 0, domains: 0)
     end
