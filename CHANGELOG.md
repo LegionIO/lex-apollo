@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.50] - 2026-11-19
+
+### Fixed
+- Aggregate expertise counts and average confidence in the database, returning one row per agent and domain instead of loading every knowledge entry into Ruby. Preserve first-tag and general-domain fallbacks on PostgreSQL and SQLite.
+
 ## [0.4.49] - 2026-11-18
 
 ### Fixed
